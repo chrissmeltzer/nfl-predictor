@@ -112,6 +112,39 @@ def test_recent_scoring_trend_weight_scales_baseline_toward_league_average(tmp_p
     assert baseline_full > 25
 
 
+def test_pass_protection_adjustment_penalizes_weak_line_against_strong_pass_rush(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-08-01T00:00Z")
+    # Team A's offensive line allows sacks well above the league-average rate...
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 5, "pass_attempts": 25, "def_sacks": 0,
+    })
+    # ...and Team B's defense generates sacks well above the league-average rate.
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 25, "def_sacks": 5,
+    })
+    seed_upcoming(conn)
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    result = predict.predict_game(conn, {**WEIGHTS, "pass_protection": 1.0}, game)
+    assert result["breakdown"]["home"]["pass_protection"] < 0
+
+
+def test_pass_protection_adjustment_is_zero_without_stats_data(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_upcoming(conn)
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    result = predict.predict_game(conn, {**WEIGHTS, "pass_protection": 1.0}, game)
+    assert result["breakdown"]["home"]["pass_protection"] == 0.0
+
+
 def test_save_prediction_persists_row(tmp_path):
     conn = make_conn(tmp_path)
     seed_upcoming(conn)

@@ -25,7 +25,7 @@ CANDIDATE_MULTIPLIERS = [0.0, 0.5, 1.0, 1.5, 2.0]
 MARGIN_TUNABLE_KEYS = [
     "recent_scoring_trend", "home_away_split", "head_to_head", "weather",
     "rest_days", "injuries", "team_form", "strength_of_schedule", "elo",
-    "recency_trend", "travel",
+    "recency_trend", "travel", "pass_protection",
 ]
 TOTAL_TUNABLE_KEYS = ["total_points_anchor", "pace"]
 

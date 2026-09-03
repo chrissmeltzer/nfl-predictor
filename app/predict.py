@@ -17,6 +17,9 @@ LEAGUE_AVERAGE_TOTAL = 44.0
 LEAGUE_AVERAGE_PLAYS = 64.0
 ADVANCED_STATS_WINDOW = 8
 TRAVEL_POINTS_PER_1000KM = 1.0
+LEAGUE_AVERAGE_SACK_RATE = 0.065
+LEAGUE_AVERAGE_DROPBACKS = 35.0
+POINTS_PER_SACK = 1.7
 
 
 def load_weights(path: Path) -> dict:
@@ -136,6 +139,28 @@ def _strength_of_schedule_adjustment(conn, team_id: str, baseline_delta: float, 
         return 0.0
     difficulty_factor = _clamp(sos["opponent_epa_avg"] * 10, -1, 1)
     return weight * baseline_delta * difficulty_factor * 0.5
+
+
+def _pass_protection_adjustment(conn, team_id: str, opponent_id: str, weight: float) -> float:
+    """Blends the offense's own sack rate allowed with the opponent's sack rate forced, both
+    relative to the league-average sack rate, into a point swing. A bottom-tier offensive
+    line facing a top pass rush projects extra sacks -- and lost points -- beyond what either
+    factor alone would suggest.
+    """
+    own = stats.pass_rush_form(conn, team_id, ADVANCED_STATS_WINDOW)
+    opponent = stats.pass_rush_form(conn, opponent_id, ADVANCED_STATS_WINDOW)
+
+    deltas = []
+    if own["protection_rate"] is not None:
+        deltas.append(own["protection_rate"] - LEAGUE_AVERAGE_SACK_RATE)
+    if opponent["pressure_rate"] is not None:
+        deltas.append(opponent["pressure_rate"] - LEAGUE_AVERAGE_SACK_RATE)
+    if not deltas:
+        return 0.0
+
+    matchup_index = sum(deltas) / len(deltas)
+    extra_sacks = matchup_index * LEAGUE_AVERAGE_DROPBACKS
+    return -weight * _clamp(extra_sacks * POINTS_PER_SACK, -5, 5)
 
 
 def _elo_adjustment(conn, team_id: str, opponent_id: str, is_home: bool, weight: float) -> float:
@@ -263,6 +288,9 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
                 conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5)
             ),
             "elo": _elo_adjustment(conn, team_id, opponent_id, is_home, weights.get("elo", 0.35)),
+            "pass_protection": _pass_protection_adjustment(
+                conn, team_id, opponent_id, weights.get("pass_protection", 0.5)
+            ),
             "recency_trend": _recency_trend_adjustment(conn, team_id, window, weights.get("recency_trend", 0.5)),
             "travel": _travel_adjustment(game, away_abbr, is_home, weights.get("travel", 0.5)),
         }

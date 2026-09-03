@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS team_game_stats (
     epa_passing REAL,
     epa_rushing REAL,
     plays REAL,
+    sacks_suffered INTEGER NOT NULL DEFAULT 0,
+    pass_attempts REAL,
+    def_sacks INTEGER NOT NULL DEFAULT 0,
     UNIQUE(team_id, season, week)
 );
 CREATE INDEX IF NOT EXISTS idx_team_game_stats_team ON team_game_stats(team_id, season, week);
@@ -90,6 +93,9 @@ _TEAM_GAME_STATS_MIGRATIONS = {
     "epa_passing": "REAL",
     "epa_rushing": "REAL",
     "plays": "REAL",
+    "sacks_suffered": "INTEGER NOT NULL DEFAULT 0",
+    "pass_attempts": "REAL",
+    "def_sacks": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -181,11 +187,14 @@ def replace_team_injuries(conn, team_id: str, injuries: list[dict], fetched_at: 
 def upsert_team_game_stat(conn, row: dict) -> None:
     conn.execute(
         """
-        INSERT INTO team_game_stats (team_id, season, week, turnovers, epa_offense, epa_passing, epa_rushing, plays)
-        VALUES (:team_id, :season, :week, :turnovers, :epa_offense, :epa_passing, :epa_rushing, :plays)
+        INSERT INTO team_game_stats (team_id, season, week, turnovers, epa_offense, epa_passing, epa_rushing, plays,
+                                      sacks_suffered, pass_attempts, def_sacks)
+        VALUES (:team_id, :season, :week, :turnovers, :epa_offense, :epa_passing, :epa_rushing, :plays,
+                :sacks_suffered, :pass_attempts, :def_sacks)
         ON CONFLICT(team_id, season, week) DO UPDATE SET
             turnovers=excluded.turnovers, epa_offense=excluded.epa_offense,
-            epa_passing=excluded.epa_passing, epa_rushing=excluded.epa_rushing, plays=excluded.plays
+            epa_passing=excluded.epa_passing, epa_rushing=excluded.epa_rushing, plays=excluded.plays,
+            sacks_suffered=excluded.sacks_suffered, pass_attempts=excluded.pass_attempts, def_sacks=excluded.def_sacks
         """,
         row,
     )

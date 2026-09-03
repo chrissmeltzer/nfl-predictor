@@ -1,0 +1,4 @@
+season,week,team,season_type,game_id,opponent_team,attempts,interceptions,rushing_fumbles_lost,sack_fumbles_lost,receiving_fumbles_lost,passing_epa,rushing_epa,carries,sacks_suffered,def_sacks
+2024,1,KC,REG,2024_01_KC_BAL,BAL,35,1,0,1,0,5.2,1.1,22,2,3
+2023,1,KC,REG,2023_01_KC_DET,DET,30,0,0,0,0,4.0,0.5,20,1,2
+2024,1,ZZZ,REG,2024_01_ZZZ_BAL,BAL,30,0,0,0,0,1.0,1.0,20,1,1

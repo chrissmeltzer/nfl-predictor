@@ -262,6 +262,47 @@ def get_team_rating(conn: sqlite3.Connection, team_id: str, default: float = 150
     return row["elo_rating"] if row else default
 
 
+def pass_rush_form(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
+    """Sack rate the team's offense allows (protection) and its defense forces (pressure),
+    both expressed as sacks per dropback (pass attempts + sacks) and summed over the window
+    rather than averaged per game, so low-volume games don't count as much as high-volume ones.
+    """
+    rows = _team_game_stats(conn, team_id, window)
+    sacks_allowed = dropbacks = 0.0
+    for row in rows:
+        if row["pass_attempts"] is None:
+            continue
+        sacks_allowed += row["sacks_suffered"]
+        dropbacks += row["pass_attempts"] + row["sacks_suffered"]
+    protection_rate = sacks_allowed / dropbacks if dropbacks else None
+
+    opponent_rows = conn.execute(
+        """
+        SELECT tgs.def_sacks AS def_sacks,
+               opp.pass_attempts AS opp_pass_attempts, opp.sacks_suffered AS opp_sacks_suffered
+        FROM games g
+        JOIN team_game_stats tgs
+          ON tgs.season = g.season AND tgs.week = g.week AND tgs.team_id = ?
+        JOIN team_game_stats opp
+          ON opp.season = g.season AND opp.week = g.week
+         AND opp.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
+        ORDER BY g.season DESC, g.week DESC
+        LIMIT ?
+        """,
+        (team_id, team_id, team_id, team_id, window),
+    ).fetchall()
+    sacks_forced = opponent_dropbacks = 0.0
+    for row in opponent_rows:
+        if row["opp_pass_attempts"] is None:
+            continue
+        sacks_forced += row["def_sacks"]
+        opponent_dropbacks += row["opp_pass_attempts"] + row["opp_sacks_suffered"]
+    pressure_rate = sacks_forced / opponent_dropbacks if opponent_dropbacks else None
+
+    return {"protection_rate": protection_rate, "pressure_rate": pressure_rate}
+
+
 def pace_form(conn: sqlite3.Connection, team_id: str, window: int) -> float | None:
     rows = _team_game_stats(conn, team_id, window)
     values = [row["plays"] for row in rows if row["plays"] is not None]

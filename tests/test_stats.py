@@ -84,3 +84,31 @@ def test_rest_days_computed_from_previous_game(tmp_path):
 
     days = stats.rest_days(conn, "A", before="2026-09-08T00:00Z")
     assert days == 7
+
+
+def seed_team_game_stat(conn, team_id, season, week, sacks_suffered, pass_attempts, def_sacks):
+    db.upsert_team_game_stat(conn, {
+        "team_id": team_id, "season": season, "week": week, "turnovers": 0,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": sacks_suffered, "pass_attempts": pass_attempts, "def_sacks": def_sacks,
+    })
+
+
+def test_pass_rush_form_computes_protection_and_pressure_rates(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    seed_team_game_stat(conn, "A", 2026, 1, sacks_suffered=2, pass_attempts=30, def_sacks=1)
+    seed_team_game_stat(conn, "B", 2026, 1, sacks_suffered=1, pass_attempts=28, def_sacks=3)
+    conn.commit()
+
+    result = stats.pass_rush_form(conn, "A", window=8)
+    assert result["protection_rate"] == 2 / 32
+    assert result["pressure_rate"] == 1 / 29
+
+
+def test_pass_rush_form_returns_none_when_no_data(tmp_path):
+    conn = make_conn(tmp_path)
+
+    result = stats.pass_rush_form(conn, "A", window=8)
+    assert result["protection_rate"] is None
+    assert result["pressure_rate"] is None

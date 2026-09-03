@@ -58,6 +58,10 @@ _FACTOR_TEMPLATES: dict[str, tuple[str | None, str | None]] = {
         "{team} is trending upward compared to their season average.",
         "{team}'s recent form has dipped below their season norm.",
     ),
+    "pass_protection": (
+        "{team}'s offensive line has the edge in pass protection this week.",
+        "{opponent}'s pass rush could give {team}'s offensive line trouble this week.",
+    ),
 }
 _ANALYSIS_MIN_MAGNITUDE = 0.4
 _ANALYSIS_MAX_ITEMS = 3

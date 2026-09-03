@@ -21,6 +21,9 @@ EPA_COLUMNS = ["passing_epa", "rushing_epa"]
 PASSING_EPA_COLUMNS = ["passing_epa"]
 RUSHING_EPA_COLUMNS = ["rushing_epa"]
 PLAY_COLUMNS = ["attempts", "carries"]
+PASS_ATTEMPTS_COLUMNS = ["attempts"]
+SACKS_SUFFERED_COLUMNS = ["sacks_suffered"]
+DEF_SACKS_COLUMNS = ["def_sacks"]
 
 
 def parse_games_csv(csv_text: str, min_season: int) -> list[dict]:
@@ -100,6 +103,7 @@ def parse_team_stats_csv(csv_text: str, min_season: int) -> list[dict]:
             continue
 
         plays_value = _sum_columns(row, PLAY_COLUMNS)
+        pass_attempts_value = _sum_columns(row, PASS_ATTEMPTS_COLUMNS)
         stats.append({
             "team_abbreviation": abbr,
             "season": season,
@@ -109,6 +113,9 @@ def parse_team_stats_csv(csv_text: str, min_season: int) -> list[dict]:
             "epa_passing": _sum_columns(row, PASSING_EPA_COLUMNS),
             "epa_rushing": _sum_columns(row, RUSHING_EPA_COLUMNS),
             "plays": plays_value if plays_value > 0 else None,
+            "sacks_suffered": int(round(_sum_columns(row, SACKS_SUFFERED_COLUMNS))),
+            "pass_attempts": pass_attempts_value if pass_attempts_value > 0 else None,
+            "def_sacks": int(round(_sum_columns(row, DEF_SACKS_COLUMNS))),
         })
     return stats
 
