@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Set your name · Fourth Down Forecast{% endblock %}
+{% block content %}
+<section class="hero compact-hero">
+  <div>
+    <p class="eyebrow">Pick'em</p>
+    <h1>What's your name?</h1>
+    <p class="hero-copy">No password needed — just a name so your picks and spot on the leaderboard stick around on this device.</p>
+  </div>
+</section>
+
+{% if error %}
+<p class="notice">{{ error }}</p>
+{% endif %}
+
+<form class="join-form" method="post" action="/join">
+  <label class="sr-only" for="player-name">Your name</label>
+  <input id="player-name" name="name" placeholder="e.g. Chris" autocomplete="name" autofocus required>
+  <input type="hidden" name="next" value="{{ next }}">
+  <button type="submit">Start picking</button>
+</form>
+{% endblock %}

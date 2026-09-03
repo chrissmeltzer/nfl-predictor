@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app import db
+from tests.test_main import make_test_client
 
 
 def _now():
@@ -77,3 +78,43 @@ def test_get_decided_picks_only_returns_final_games(tmp_path):
     assert len(decided) == 1
     assert decided[0]["week"] == 1
     assert decided[0]["player_name"] == "Chris"
+
+
+def test_join_get_renders_name_form(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.get("/join")
+    assert response.status_code == 200
+    assert 'name="name"' in response.text
+
+
+def test_join_post_creates_player_and_sets_cookie(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.post("/join", data={"name": "Chris", "next": "/"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert "picker_id" in response.cookies
+
+
+def test_join_post_reuses_existing_player_case_insensitively(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/join", data={"name": "chris", "next": "/"})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    count = conn.execute("SELECT COUNT(*) as c FROM players").fetchone()["c"]
+    conn.close()
+    assert count == 1
+
+
+def test_join_post_rejects_empty_name(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.post("/join", data={"name": "   ", "next": "/"})
+    assert response.status_code == 422
+    assert "Enter a name" in response.text
+
+
+def test_base_header_shows_picking_as_name_after_join(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    response = client.get("/")
+    assert "Picking as" in response.text
+    assert "Chris" in response.text

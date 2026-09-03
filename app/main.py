@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -65,6 +66,16 @@ _FACTOR_TEMPLATES: dict[str, tuple[str | None, str | None]] = {
 }
 _ANALYSIS_MIN_MAGNITUDE = 0.4
 _ANALYSIS_MAX_ITEMS = 3
+
+PICKER_COOKIE = "picker_id"
+PICKER_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+
+
+def _current_player(request: Request, conn) -> sqlite3.Row | None:
+    raw = request.cookies.get(PICKER_COOKIE)
+    if not raw or not raw.isdigit():
+        return None
+    return db.get_player_by_id(conn, int(raw))
 
 
 def get_db():
@@ -263,8 +274,8 @@ def _game_view(conn, game, teams, result: dict, selected_team_id: str | None = N
     return view
 
 
-def _template_context(request: Request, **kwargs) -> dict:
-    return {"request": request, **kwargs}
+def _template_context(request: Request, conn, **kwargs) -> dict:
+    return {"request": request, "player": _current_player(request, conn), **kwargs}
 
 
 @app.post("/sync")
@@ -298,7 +309,7 @@ def schedule(request: Request, week: int | None = None, sort: str | None = None,
         request,
         "index.html",
         _template_context(
-            request, matchups=matchups, teams=list(teams.values()), week=week, season=season, sort=sort
+            request, conn, matchups=matchups, teams=list(teams.values()), week=week, season=season, sort=sort
         ),
     )
 
@@ -344,6 +355,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
         "team_detail.html",
         _template_context(
             request,
+            conn,
             team=team,
             team_logo=_logo_url(team),
             season=current_season,
@@ -393,7 +405,7 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
         request,
         "game_detail.html",
         _template_context(
-            request, game=game, result=result, matchup=matchup, home_team=home_team, away_team=away_team,
+            request, conn, game=game, result=result, matchup=matchup, home_team=home_team, away_team=away_team,
             home_logo=_logo_url(home_team), away_logo=_logo_url(away_team), weather=weather_row,
             weather_severity=_weather_severity(weather_row),
             injuries_home=_injury_view(injuries_home), injuries_away=_injury_view(injuries_away),
@@ -473,7 +485,7 @@ def rankings(request: Request, conn=Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "rankings.html",
-        _template_context(request, rankings=ranked_teams, teams=list(teams), season=season),
+        _template_context(request, conn, rankings=ranked_teams, teams=list(teams), season=season),
     )
 
 
@@ -505,5 +517,31 @@ def accuracy(request: Request, conn=Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "accuracy.html",
-        _template_context(request, errors=errors, mean_margin_error=mean_margin_error, mean_total_error=mean_total_error, teams=teams),
+        _template_context(request, conn, errors=errors, mean_margin_error=mean_margin_error, mean_total_error=mean_total_error, teams=teams),
     )
+
+
+@app.get("/join", response_class=HTMLResponse)
+def join_form(request: Request, next: str = "/", error: str | None = None, conn=Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "join.html", _template_context(request, conn, next=next, error=error)
+    )
+
+
+@app.post("/join")
+def join_submit(request: Request, name: str = Form(...), next: str = Form("/"), conn=Depends(get_db)):
+    cleaned = name.strip()
+    if not cleaned:
+        return templates.TemplateResponse(
+            request,
+            "join.html",
+            _template_context(request, conn, next=next, error="Enter a name to continue."),
+            status_code=422,
+        )
+    player = db.get_or_create_player(conn, cleaned, datetime.now(timezone.utc).isoformat())
+    conn.commit()
+    response = RedirectResponse(url=next, status_code=303)
+    response.set_cookie(
+        PICKER_COOKIE, str(player["id"]), max_age=PICKER_COOKIE_MAX_AGE, httponly=True, samesite="lax"
+    )
+    return response

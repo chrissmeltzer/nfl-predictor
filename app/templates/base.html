@@ -21,6 +21,9 @@
         <a href="/rankings">Rankings</a>
         <a href="/accuracy">Accuracy</a>
       </nav>
+      <a class="picker-chip" href="/join?next={{ (request.url.path ~ (('?' + request.url.query) if request.url.query else '')) | urlencode }}">
+        {% if player %}Picking as <strong>{{ player.name }}</strong> · switch{% else %}Set your name to pick{% endif %}
+      </a>
       <form class="team-search" action="/teams" method="get" role="search">
         <label class="sr-only" for="team-query">Search an NFL team</label>
         <input id="team-query" name="q" list="teams" placeholder="Find a team…" autocomplete="off">
