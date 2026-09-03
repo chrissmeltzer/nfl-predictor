@@ -1,46 +1,21 @@
-{% extends "base.html" %}
+{% extends 'base.html' %}
+{% block title %}{{ away_team.name }} at {{ home_team.name }} · Fourth Down Forecast{% endblock %}
 {% block content %}
-<h1>{{ away_team.name }} at {{ home_team.name }}</h1>
-<p>{{ game.kickoff_at }} &middot; {{ game.venue_name }}</p>
+<section class="game-hero">
+  <div class="game-team"><img src="{{ away_logo }}" alt="{{ away_team.name }} logo" class="team-logo team-logo-xl"><a href="/teams/{{ away_team.id }}">{{ away_team.name }}</a><span>Away</span></div>
+  <div class="game-score"><p class="eyebrow">Week {{ game.week }} · {{ matchup.kickoff }}</p><strong>{{ matchup.away_score }}<small>–</small>{{ matchup.home_score }}</strong><span>Model projection</span><p>{{ matchup.winner.name }} has the projected edge</p></div>
+  <div class="game-team"><img src="{{ home_logo }}" alt="{{ home_team.name }} logo" class="team-logo team-logo-xl"><a href="/teams/{{ home_team.id }}">{{ home_team.name }}</a><span>Home</span></div>
+</section>
 
-<h2>Predicted Score: {{ result.predicted_away_score }} &ndash; {{ result.predicted_home_score }}</h2>
+<div class="detail-grid">
+  <section class="detail-card"><p class="eyebrow">Win probabilities</p><h2>Projected advantage</h2><div class="probability-label"><span>{{ away_team.abbreviation }}</span><strong>{{ matchup.away_probability }}%</strong></div><div class="probability-track"><i style="width: {{ matchup.away_probability }}%"></i></div><div class="probability-label"><span>{{ home_team.abbreviation }}</span><strong>{{ matchup.home_probability }}%</strong></div><div class="probability-track probability-track-violet"><i style="width: {{ matchup.home_probability }}%"></i></div></section>
+  <section class="detail-card"><p class="eyebrow">Game conditions</p><h2>{{ game.venue_name or 'Venue TBD' }}</h2>{% if weather %}<p class="condition-value">{{ weather.temp_f }}°F <span>·</span> {{ weather.wind_mph }} mph wind <span>·</span> {{ weather.precip_pct }}% precipitation</p>{% else %}<p class="muted">Weather data is not available for this matchup.</p>{% endif %}</section>
+  <section class="detail-card"><p class="eyebrow">Head to head</p><h2>Historical context</h2>{% if head_to_head.avg_points_scored is not none %}<p class="condition-value">{{ '%.1f' | format(head_to_head.avg_points_scored) }} average points scored</p>{% else %}<p class="muted">No prior head-to-head sample is available.</p>{% endif %}</section>
+</div>
 
-<h3>Factor Breakdown</h3>
-<table>
-  <thead><tr><th>Factor</th><th>{{ away_team.abbreviation }}</th><th>{{ home_team.abbreviation }}</th></tr></thead>
-  <tbody>
-    {% for factor in result.breakdown.home.keys() %}
-    <tr>
-      <td>{{ factor }}</td>
-      <td>{{ "%.1f"|format(result.breakdown.away[factor]) }}</td>
-      <td>{{ "%.1f"|format(result.breakdown.home[factor]) }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-<h3>Head-to-Head</h3>
-<p>
-  {% if head_to_head.meetings %}
-    {{ home_team.abbreviation }} averages {{ "%.1f"|format(head_to_head.avg_points_scored) }} points
-    over {{ head_to_head.meetings }} meeting(s) vs {{ away_team.abbreviation }}.
-  {% else %}
-    No prior meetings on record.
-  {% endif %}
-</p>
-
-<h3>Weather</h3>
-<p>
-  {% if weather %}
-    {{ weather.temp_f }}&deg;F, wind {{ weather.wind_mph }} mph, {{ weather.precip_pct }}% precip chance
-  {% else %}
-    No forecast (indoor venue or not yet available).
-  {% endif %}
-</p>
-
-<h3>Injuries</h3>
-<h4>{{ home_team.abbreviation }}</h4>
-<ul>{% for i in injuries_home %}<li>{{ i.player_name }} ({{ i.position }}) &ndash; {{ i.status }}</li>{% endfor %}</ul>
-<h4>{{ away_team.abbreviation }}</h4>
-<ul>{% for i in injuries_away %}<li>{{ i.player_name }} ({{ i.position }}) &ndash; {{ i.status }}</li>{% endfor %}</ul>
+<section class="section-heading"><div><p class="eyebrow">Availability report</p><h2>Injuries</h2></div></section>
+<div class="injury-grid">
+  <section class="detail-card"><h3>{{ away_team.name }}</h3>{% for injury in injuries_away %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong>{{ injury.status }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
+  <section class="detail-card"><h3>{{ home_team.name }}</h3>{% for injury in injuries_home %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong>{{ injury.status }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
+</div>
 {% endblock %}

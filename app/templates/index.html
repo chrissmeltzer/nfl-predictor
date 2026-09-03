@@ -1,28 +1,51 @@
-{% extends "base.html" %}
+{% extends 'base.html' %}
+{% block title %}Week {{ week }} Predictions · Fourth Down Forecast{% endblock %}
 {% block content %}
-<h1>Week {{ week }} &middot; {{ season }}</h1>
-<form method="get" action="/">
-  <label>Week: <input type="number" name="week" min="1" max="18" value="{{ week }}"></label>
-  <button type="submit">Go</button>
-</form>
-<table>
-  <thead>
-    <tr><th>Away</th><th>Home</th><th>Kickoff</th><th>Predicted Score</th></tr>
-  </thead>
-  <tbody>
-    {% for game in games %}
-    {% set p = predictions[game.id] %}
-    <tr>
-      <td>{{ teams[game.away_team_id].name }}</td>
-      <td>{{ teams[game.home_team_id].name }}</td>
-      <td>{{ game.kickoff_at }}</td>
-      <td>
-        <a href="/games/{{ game.id }}">
-          {{ p.predicted_away_score }} &ndash; {{ p.predicted_home_score }}
-        </a>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<section class="hero">
+  <div>
+    <p class="eyebrow">{{ season }} season · Week {{ week }}</p>
+    <h1>Game predictions with a sharper view.</h1>
+    <p class="hero-copy">Projected scorelines, winning probabilities, and team-level schedules in one focused dashboard.</p>
+  </div>
+  <div class="hero-stat"><span>Week</span><strong>{{ week }}</strong><small>{{ matchups | length }} games tracked</small></div>
+</section>
+
+{% if request.query_params.get('team_not_found') %}
+<p class="notice">No team matched that search. Try a city, team name, or abbreviation.</p>
+{% endif %}
+
+<section class="section-heading">
+  <div><p class="eyebrow">This week</p><h2>Projected matchups</h2></div>
+  <p>{{ matchups | length }} games sorted by kickoff</p>
+</section>
+
+{% if matchups %}
+<div class="matchup-grid">
+  {% for matchup in matchups %}
+  <article class="matchup-card">
+    <div class="card-meta"><span>Week {{ matchup.game.week }}</span><time>{{ matchup.kickoff }}</time></div>
+    <div class="teams-row">
+      <a href="/teams/{{ matchup.away.id }}" class="team-lockup">
+        <img src="{{ matchup.away_logo }}" alt="{{ matchup.away.name }} logo" class="team-logo">
+        <span>{{ matchup.away.abbreviation }}</span>
+      </a>
+      <div class="score-prediction"><strong>{{ matchup.away_score }}<small>–</small>{{ matchup.home_score }}</strong><span>Projected</span></div>
+      <a href="/teams/{{ matchup.home.id }}" class="team-lockup team-lockup-right">
+        <img src="{{ matchup.home_logo }}" alt="{{ matchup.home.name }} logo" class="team-logo">
+        <span>{{ matchup.home.abbreviation }}</span>
+      </a>
+    </div>
+    <div class="probability-row">
+      <span>{{ matchup.away_probability }}%</span>
+      <div class="probability-track" aria-label="{{ matchup.away.name }} {{ matchup.away_probability }} percent win probability"><i style="width: {{ matchup.away_probability }}%"></i></div>
+      <span>{{ matchup.home_probability }}%</span>
+    </div>
+    <p class="pick-line"><span>Model edge</span><strong>{{ matchup.winner.name }}</strong></p>
+    <a class="card-link" href="/games/{{ matchup.game.id }}">Open game analysis <span>→</span></a>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<section class="empty-state"><h2>No games are available for this week.</h2><p>Use the sync endpoint to refresh the schedule and return here for projections.</p></section>
+{% endif %}
 {% endblock %}
