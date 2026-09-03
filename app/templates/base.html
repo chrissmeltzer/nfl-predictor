@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NFL Predictor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/">Schedule</a>
+      <a href="/accuracy">Accuracy</a>
+      <form method="post" action="/sync" onsubmit="return confirm('Refresh data from ESPN/nflverse/Open-Meteo now?');">
+        <button type="submit">Refresh Data</button>
+      </form>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

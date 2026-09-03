@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Week {{ week }} &middot; {{ season }}</h1>
+<form method="get" action="/">
+  <label>Week: <input type="number" name="week" min="1" max="18" value="{{ week }}"></label>
+  <button type="submit">Go</button>
+</form>
+<table>
+  <thead>
+    <tr><th>Away</th><th>Home</th><th>Kickoff</th><th>Predicted Score</th></tr>
+  </thead>
+  <tbody>
+    {% for game in games %}
+    {% set p = predictions[game.id] %}
+    <tr>
+      <td>{{ teams[game.away_team_id].name }}</td>
+      <td>{{ teams[game.home_team_id].name }}</td>
+      <td>{{ game.kickoff_at }}</td>
+      <td>
+        <a href="/games/{{ game.id }}">
+          {{ p.predicted_away_score }} &ndash; {{ p.predicted_home_score }}
+        </a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

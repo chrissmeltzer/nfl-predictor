@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ away_team.name }} at {{ home_team.name }}</h1>
+<p>{{ game.kickoff_at }} &middot; {{ game.venue_name }}</p>
+
+<h2>Predicted Score: {{ result.predicted_away_score }} &ndash; {{ result.predicted_home_score }}</h2>
+
+<h3>Factor Breakdown</h3>
+<table>
+  <thead><tr><th>Factor</th><th>{{ away_team.abbreviation }}</th><th>{{ home_team.abbreviation }}</th></tr></thead>
+  <tbody>
+    {% for factor in result.breakdown.home.keys() %}
+    <tr>
+      <td>{{ factor }}</td>
+      <td>{{ "%.1f"|format(result.breakdown.away[factor]) }}</td>
+      <td>{{ "%.1f"|format(result.breakdown.home[factor]) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Head-to-Head</h3>
+<p>
+  {% if head_to_head.meetings %}
+    {{ home_team.abbreviation }} averages {{ "%.1f"|format(head_to_head.avg_points_scored) }} points
+    over {{ head_to_head.meetings }} meeting(s) vs {{ away_team.abbreviation }}.
+  {% else %}
+    No prior meetings on record.
+  {% endif %}
+</p>
+
+<h3>Weather</h3>
+<p>
+  {% if weather %}
+    {{ weather.temp_f }}&deg;F, wind {{ weather.wind_mph }} mph, {{ weather.precip_pct }}% precip chance
+  {% else %}
+    No forecast (indoor venue or not yet available).
+  {% endif %}
+</p>
+
+<h3>Injuries</h3>
+<h4>{{ home_team.abbreviation }}</h4>
+<ul>{% for i in injuries_home %}<li>{{ i.player_name }} ({{ i.position }}) &ndash; {{ i.status }}</li>{% endfor %}</ul>
+<h4>{{ away_team.abbreviation }}</h4>
+<ul>{% for i in injuries_away %}<li>{{ i.player_name }} ({{ i.position }}) &ndash; {{ i.status }}</li>{% endfor %}</ul>
+{% endblock %}

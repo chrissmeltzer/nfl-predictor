@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Prediction Accuracy</h1>
+{% if mean_margin_error is not none %}
+<p>Mean margin error: {{ "%.1f"|format(mean_margin_error) }} points &middot; Mean total-points error: {{ "%.1f"|format(mean_total_error) }} points</p>
+{% else %}
+<p>No completed, predicted games yet.</p>
+{% endif %}
+<table>
+  <thead><tr><th>Game</th><th>Predicted</th><th>Actual</th><th>Margin Error</th></tr></thead>
+  <tbody>
+    {% for e in errors %}
+    <tr>
+      <td>{{ e.row.away_abbr }} @ {{ e.row.home_abbr }}</td>
+      <td>{{ "%.1f"|format(e.row.predicted_away_score) }} &ndash; {{ "%.1f"|format(e.row.predicted_home_score) }}</td>
+      <td>{{ e.row.away_score }} &ndash; {{ e.row.home_score }}</td>
+      <td>{{ "%.1f"|format(e.margin_error) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

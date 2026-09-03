@@ -1,0 +1,6 @@
+body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
+nav { display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem; }
+nav a { color: #0b5fff; text-decoration: none; }
+table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+button { cursor: pointer; }
