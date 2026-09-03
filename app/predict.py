@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from app import stats
+from app import elo, stats
 from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE
 
 INJURY_STATUSES_COUNTED = {"Out", "Doubtful", "Injured Reserve"}
@@ -87,7 +87,6 @@ def _turnover_adjustment(conn, team_id: str, weight: float) -> float:
     if committed is None or forced is None:
         return 0.0
     margin = forced - committed
-    # Each net turnover is worth roughly 4 points of field position and possession value.
     return weight * _clamp(margin * 4, -6, 6)
 
 
@@ -96,7 +95,6 @@ def _epa_adjustment(conn, team_id: str, weight: float) -> float:
     if form["epa_offense_avg"] is None or form["epa_allowed_avg"] is None:
         return 0.0
     net_epa = form["epa_offense_avg"] - form["epa_allowed_avg"]
-    # Team EPA/play typically ranges roughly -0.3 to +0.3; scale into point space.
     return weight * _clamp(net_epa * 20, -8, 8)
 
 
@@ -104,9 +102,18 @@ def _strength_of_schedule_adjustment(conn, team_id: str, baseline_delta: float, 
     sos = stats.strength_of_schedule(conn, team_id, ADVANCED_STATS_WINDOW)
     if sos["opponent_epa_avg"] is None:
         return 0.0
-    # Scale recent-form trust up when opponents were strong, down when opponents were weak.
     difficulty_factor = _clamp(sos["opponent_epa_avg"] * 10, -1, 1)
     return weight * baseline_delta * difficulty_factor * 0.5
+
+
+def _elo_adjustment(conn, team_id: str, opponent_id: str, is_home: bool, weight: float) -> float:
+    team_rating = stats.get_team_rating(conn, team_id)
+    opponent_rating = stats.get_team_rating(conn, opponent_id)
+    home_field = elo.HOME_FIELD_ADVANTAGE if is_home else -elo.HOME_FIELD_ADVANTAGE
+    rating_diff = (team_rating - opponent_rating) + home_field
+    # ~25 Elo rating points roughly corresponds to 1 point of scoring margin, consistent
+    # with FiveThirtyEight's published Elo-to-point-spread conversions.
+    return weight * _clamp(rating_diff / 25.0, -7, 7)
 
 
 def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> dict:
@@ -151,6 +158,7 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
             "strength_of_schedule": _strength_of_schedule_adjustment(
                 conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5)
             ),
+            "elo": _elo_adjustment(conn, team_id, opponent_id, is_home, weights.get("elo", 0.5)),
         }
         breakdown[side] = {"baseline": baseline, **adjustments}
         return baseline + sum(adjustments.values())

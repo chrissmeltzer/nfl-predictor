@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+MOV_DAMPENING_CAP = 21.0
+
 
 def _team_games(conn: sqlite3.Connection, team_id: str, limit: int | None = None) -> list[sqlite3.Row]:
     query = """
@@ -15,6 +17,22 @@ def _team_games(conn: sqlite3.Connection, team_id: str, limit: int | None = None
     return conn.execute(query, (team_id, team_id)).fetchall()
 
 
+def _dampen_margin(scored: float, allowed: float, cap: float) -> tuple[float, float]:
+    """Compress a game's scoring margin beyond ``cap`` points while preserving total points.
+
+    Mirrors the spirit of FiveThirtyEight's Elo margin-of-victory dampening: a 45-point blowout
+    shouldn't move a team's recent-form trend as much as a nail-biter win does. Total points
+    (scored + allowed) is left unchanged; only the differential is capped.
+    """
+    mean = (scored + allowed) / 2
+    diff = scored - allowed
+    if diff > cap:
+        diff = cap
+    elif diff < -cap:
+        diff = -cap
+    return mean + diff / 2, mean - diff / 2
+
+
 def recent_scoring_stats(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
     games = _team_games(conn, team_id, limit=window)
     if not games:
@@ -23,11 +41,12 @@ def recent_scoring_stats(conn: sqlite3.Connection, team_id: str, window: int) ->
     scored, allowed = [], []
     for g in games:
         if g["home_team_id"] == team_id:
-            scored.append(g["home_score"])
-            allowed.append(g["away_score"])
+            game_scored, game_allowed = g["home_score"], g["away_score"]
         else:
-            scored.append(g["away_score"])
-            allowed.append(g["home_score"])
+            game_scored, game_allowed = g["away_score"], g["home_score"]
+        damped_scored, damped_allowed = _dampen_margin(game_scored, game_allowed, MOV_DAMPENING_CAP)
+        scored.append(damped_scored)
+        allowed.append(damped_allowed)
 
     return {
         "avg_points_scored": sum(scored) / len(scored),
@@ -154,12 +173,6 @@ def epa_form(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
 
 
 def strength_of_schedule(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
-    """Average offensive EPA quality of a team's recent opponents.
-
-    This is a simplified proxy for strength of schedule: it looks at how strong (by their own
-    offensive EPA) the opponents faced in the team's last ``window`` games have been, so a hot
-    scoring streak against weak defenses can be weighted differently than one against strong ones.
-    """
     opponent_rows = conn.execute(
         """
         SELECT CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END AS opponent_id
@@ -182,3 +195,8 @@ def strength_of_schedule(conn: sqlite3.Connection, team_id: str, window: int) ->
     if not epa_values:
         return {"opponent_epa_avg": None}
     return {"opponent_epa_avg": sum(epa_values) / len(epa_values)}
+
+
+def get_team_rating(conn: sqlite3.Connection, team_id: str, default: float = 1500.0) -> float:
+    row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = ?", (team_id,)).fetchone()
+    return row["elo_rating"] if row else default

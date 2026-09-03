@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app import db
+from app import db, elo
 from app.config import SYNC_SEASONS_BACK
 from app.reference import STADIUMS, canonical_abbreviation
 from app.sources import espn, nflverse, weather
@@ -45,7 +45,6 @@ def sync_historical(conn, client: httpx.Client, min_season: int, max_season: int
 
 
 def sync_team_stats(conn, client: httpx.Client, current_season: int, seasons_back: int) -> None:
-    """Sync per-team-per-week turnover and offensive EPA stats used by the prediction model."""
     for season in range(current_season - seasons_back, current_season + 1):
         try:
             rows = nflverse.fetch_team_stats(client, season)
@@ -105,9 +104,6 @@ def sync_injuries_for_upcoming(conn, client: httpx.Client) -> None:
         by_team: dict[str, list[dict]] = {}
         for injury in espn.parse_injuries(summary):
             by_team.setdefault(injury["team_abbreviation"], []).append(injury)
-        # Iterate the summary's team blocks directly (not just by_team, which is
-        # built from parse_injuries and so omits teams with zero current injuries)
-        # so a team that has fully recovered still gets its stale rows cleared.
         for team_block in summary.get("injuries", []):
             abbr = canonical_abbreviation(team_block["team"]["abbreviation"])
             team_id = db.get_team_id_by_abbreviation(conn, abbr)
@@ -122,6 +118,7 @@ def sync_all(conn, client: httpx.Client, current_season: int) -> None:
     sync_teams(conn, client)
     sync_historical(conn, client, min_season=current_season - SYNC_SEASONS_BACK, max_season=current_season)
     sync_team_stats(conn, client, current_season, SYNC_SEASONS_BACK)
+    elo.sync_ratings(conn, _now_iso())
     season, week = espn.fetch_current_week(client)
     for w in range(1, week + 3):
         sync_schedule(conn, client, season, w)
