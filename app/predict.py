@@ -40,16 +40,18 @@ def _scaled_baseline(raw_baseline: float, weight: float) -> float:
     return LEAGUE_AVERAGE_SCORE + weight * (raw_baseline - LEAGUE_AVERAGE_SCORE)
 
 
-def _home_away_adjustment(conn, team_id: str, is_home: bool, weight: float) -> float:
-    split = stats.home_away_split(conn, team_id)
+def _home_away_adjustment(conn, team_id: str, is_home: bool, weight: float, before: str | None) -> float:
+    split = stats.home_away_split(conn, team_id, before=before)
     if split["overall_avg"] is None:
         return 0.0
     side_avg = split["home_avg"] if is_home else split["away_avg"]
     return weight * (side_avg - split["overall_avg"])
 
 
-def _head_to_head_adjustment(conn, team_id: str, opponent_id: str, overall_avg, weight: float) -> float:
-    h2h = stats.head_to_head(conn, team_id, opponent_id)
+def _head_to_head_adjustment(
+    conn, team_id: str, opponent_id: str, overall_avg, weight: float, before: str | None
+) -> float:
+    h2h = stats.head_to_head(conn, team_id, opponent_id, before=before)
     if h2h["avg_points_scored"] is None or overall_avg is None:
         return 0.0
     delta = h2h["avg_points_scored"] - overall_avg
@@ -82,16 +84,16 @@ def _injuries_adjustment(conn, team_id: str, weight: float) -> float:
     return weight * _clamp(total, -10, 0)
 
 
-def _recency_trend_adjustment(conn, team_id: str, window: int, weight: float) -> float:
-    flat = stats.recent_scoring_stats(conn, team_id, window)
-    weighted = stats.recency_weighted_scoring(conn, team_id, window)
+def _recency_trend_adjustment(conn, team_id: str, window: int, weight: float, before: str | None) -> float:
+    flat = stats.recent_scoring_stats(conn, team_id, window, before=before)
+    weighted = stats.recency_weighted_scoring(conn, team_id, window, before=before)
     if flat["avg_points_scored"] is None or weighted is None:
         return 0.0
     delta = weighted["avg_points_scored"] - flat["avg_points_scored"]
     return weight * _clamp(delta, -4, 4)
 
 
-def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
+def _team_form_adjustment(conn, team_id: str, weight: float, before: tuple[int, int] | None) -> float:
     """Combined turnover-margin and split passing/rushing EPA signal.
 
     Passing efficiency explains more modern NFL scoring variance than rushing efficiency,
@@ -99,13 +101,13 @@ def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
     and EPA are averaged together (not summed) since both largely measure the same
     underlying team quality.
     """
-    committed = stats.turnover_form(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_committed"]
-    forced = stats.turnovers_forced(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_forced"]
+    committed = stats.turnover_form(conn, team_id, ADVANCED_STATS_WINDOW, before=before)["avg_turnovers_committed"]
+    forced = stats.turnovers_forced(conn, team_id, ADVANCED_STATS_WINDOW, before=before)["avg_turnovers_forced"]
     turnover_component = (
         _clamp((forced - committed) * 4, -6, 6) if committed is not None and forced is not None else None
     )
 
-    split = stats.epa_split_form(conn, team_id, ADVANCED_STATS_WINDOW)
+    split = stats.epa_split_form(conn, team_id, ADVANCED_STATS_WINDOW, before=before)
     pass_net = (
         split["passing_epa_avg"] - split["passing_epa_allowed_avg"]
         if split["passing_epa_avg"] is not None and split["passing_epa_allowed_avg"] is not None else None
@@ -133,22 +135,26 @@ def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
     return weight * (sum(components) / len(components))
 
 
-def _strength_of_schedule_adjustment(conn, team_id: str, baseline_delta: float, weight: float) -> float:
-    sos = stats.strength_of_schedule(conn, team_id, ADVANCED_STATS_WINDOW)
+def _strength_of_schedule_adjustment(
+    conn, team_id: str, baseline_delta: float, weight: float, before: tuple[int, int] | None
+) -> float:
+    sos = stats.strength_of_schedule(conn, team_id, ADVANCED_STATS_WINDOW, before=before)
     if sos["opponent_epa_avg"] is None:
         return 0.0
     difficulty_factor = _clamp(sos["opponent_epa_avg"] * 10, -1, 1)
     return weight * baseline_delta * difficulty_factor * 0.5
 
 
-def _pass_protection_adjustment(conn, team_id: str, opponent_id: str, weight: float) -> float:
+def _pass_protection_adjustment(
+    conn, team_id: str, opponent_id: str, weight: float, before: tuple[int, int] | None
+) -> float:
     """Blends the offense's own sack rate allowed with the opponent's sack rate forced, both
     relative to the league-average sack rate, into a point swing. A bottom-tier offensive
     line facing a top pass rush projects extra sacks -- and lost points -- beyond what either
     factor alone would suggest.
     """
-    own = stats.pass_rush_form(conn, team_id, ADVANCED_STATS_WINDOW)
-    opponent = stats.pass_rush_form(conn, opponent_id, ADVANCED_STATS_WINDOW)
+    own = stats.pass_rush_form(conn, team_id, ADVANCED_STATS_WINDOW, before=before)
+    opponent = stats.pass_rush_form(conn, opponent_id, ADVANCED_STATS_WINDOW, before=before)
 
     deltas = []
     if own["protection_rate"] is not None:
@@ -163,20 +169,37 @@ def _pass_protection_adjustment(conn, team_id: str, opponent_id: str, weight: fl
     return -weight * _clamp(extra_sacks * POINTS_PER_SACK, -5, 5)
 
 
-def _elo_adjustment(conn, team_id: str, opponent_id: str, is_home: bool, weight: float) -> float:
-    team_rating = stats.get_team_rating(conn, team_id)
-    opponent_rating = stats.get_team_rating(conn, opponent_id)
+def _team_ratings(conn, game: sqlite3.Row, home_id: str, away_id: str) -> dict[str, float]:
+    """Elo ratings for both teams, as they stood at kickoff of `game`.
+
+    For an upcoming game, that's simply the persisted current ratings -- every finalized
+    game in the database already happened before it. For a game that's itself final (i.e.
+    we're backtesting/calibrating against it), the persisted ratings reflect *all* finalized
+    games including this one and every one after it, so they're replayed fresh up to (but
+    not including) this game instead, to avoid leaking future results into its own prediction.
+    """
+    if game["status"] == "final":
+        computed = elo.recompute_ratings(conn, before=(game["season"], game["week"]))
+        return {home_id: computed[home_id], away_id: computed[away_id]}
+    return {home_id: stats.get_team_rating(conn, home_id), away_id: stats.get_team_rating(conn, away_id)}
+
+
+def _elo_adjustment(
+    ratings: dict[str, float], team_id: str, opponent_id: str, is_home: bool, weight: float
+) -> float:
+    team_rating = ratings[team_id]
+    opponent_rating = ratings[opponent_id]
     home_field = elo.HOME_FIELD_ADVANTAGE if is_home else -elo.HOME_FIELD_ADVANTAGE
     rating_diff = (team_rating - opponent_rating) + home_field
     return weight * _clamp(rating_diff / 25.0, -7, 7)
 
 
-def _elo_favorite(conn, home_id: str, away_id: str) -> str:
+def _elo_favorite(ratings: dict[str, float], home_id: str, away_id: str) -> str:
     """Which team Elo alone (rating + home field, no other factors) would favor -- used to
     flag when the full model's pick diverges from the raw power rating.
     """
-    home_rating = stats.get_team_rating(conn, home_id) + elo.HOME_FIELD_ADVANTAGE
-    away_rating = stats.get_team_rating(conn, away_id)
+    home_rating = ratings[home_id] + elo.HOME_FIELD_ADVANTAGE
+    away_rating = ratings[away_id]
     return home_id if home_rating >= away_rating else away_id
 
 
@@ -210,9 +233,9 @@ def _weather_total_shift(weather_row: sqlite3.Row | None) -> float:
     return -(wind_penalty + precip_penalty) * 2
 
 
-def _pace_target_shift(conn, home_id: str, away_id: str, weight: float) -> float:
-    home_pace = stats.pace_form(conn, home_id, ADVANCED_STATS_WINDOW)
-    away_pace = stats.pace_form(conn, away_id, ADVANCED_STATS_WINDOW)
+def _pace_target_shift(conn, home_id: str, away_id: str, weight: float, before: tuple[int, int] | None) -> float:
+    home_pace = stats.pace_form(conn, home_id, ADVANCED_STATS_WINDOW, before=before)
+    away_pace = stats.pace_form(conn, away_id, ADVANCED_STATS_WINDOW, before=before)
     if home_pace is None or away_pace is None:
         return 0.0
     combined_avg_plays = (home_pace + away_pace) / 2
@@ -221,7 +244,7 @@ def _pace_target_shift(conn, home_id: str, away_id: str, weight: float) -> float
 
 def _apply_total_anchor(
     conn, home_id: str, away_id: str, home_final: float, away_final: float,
-    weather_row: sqlite3.Row | None, weights: dict,
+    weather_row: sqlite3.Row | None, weights: dict, before: tuple[int, int] | None,
 ) -> tuple[float, float, float]:
     anchor_weight = weights.get("total_points_anchor", 0.5)
     pace_weight = weights.get("pace", 0.3)
@@ -231,7 +254,7 @@ def _apply_total_anchor(
 
     target_total = LEAGUE_AVERAGE_TOTAL
     target_total += _weather_total_shift(weather_row)
-    target_total += _pace_target_shift(conn, home_id, away_id, pace_weight)
+    target_total += _pace_target_shift(conn, home_id, away_id, pace_weight, before)
 
     blended_total = predicted_total + anchor_weight * (target_total - predicted_total)
     new_home = (blended_total + predicted_margin) / 2
@@ -256,13 +279,20 @@ def _prediction_confidence(home_season_games: int, away_season_games: int, windo
 def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> dict:
     window = weights.get("recent_games_window", 8)
     home_id, away_id = game["home_team_id"], game["away_team_id"]
+    # Every historical lookup below is cut off at this game's own kickoff, so backtesting an
+    # already-final game (e.g. during calibration) can't leak the results of games that hadn't
+    # happened yet. For a genuinely upcoming game this is a no-op -- only past games are ever
+    # final, so they're already all before it.
+    before_kickoff = game["kickoff_at"]
+    before_season_week = (game["season"], game["week"])
+    ratings = _team_ratings(conn, game, home_id, away_id)
 
     home_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = ?", (home_id,)).fetchone()
     away_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = ?", (away_id,)).fetchone()
     away_abbr = away_abbr_row["abbreviation"] if away_abbr_row else None
 
-    home_recent = stats.recent_scoring_stats(conn, home_id, window)
-    away_recent = stats.recent_scoring_stats(conn, away_id, window)
+    home_recent = stats.recent_scoring_stats(conn, home_id, window, before=before_kickoff)
+    away_recent = stats.recent_scoring_stats(conn, away_id, window, before=before_kickoff)
     trend_weight = weights.get("recent_scoring_trend", 1.0)
 
     home_baseline = _scaled_baseline(
@@ -272,8 +302,8 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
         _average(away_recent["avg_points_scored"], home_recent["avg_points_allowed"]), trend_weight
     )
 
-    home_split = stats.home_away_split(conn, home_id)
-    away_split = stats.home_away_split(conn, away_id)
+    home_split = stats.home_away_split(conn, home_id, before=before_kickoff)
+    away_split = stats.home_away_split(conn, away_id, before=before_kickoff)
 
     weather_row = conn.execute(
         "SELECT * FROM weather_forecasts WHERE game_id = ?", (game["id"],)
@@ -284,9 +314,11 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     def apply(side: str, team_id: str, baseline: float, is_home: bool, overall_avg):
         opponent_id = away_id if is_home else home_id
         adjustments = {
-            "home_away_split": _home_away_adjustment(conn, team_id, is_home, weights.get("home_away_split", 1.0)),
+            "home_away_split": _home_away_adjustment(
+                conn, team_id, is_home, weights.get("home_away_split", 1.0), before_kickoff
+            ),
             "head_to_head": _head_to_head_adjustment(
-                conn, team_id, opponent_id, overall_avg, weights.get("head_to_head", 0.5)
+                conn, team_id, opponent_id, overall_avg, weights.get("head_to_head", 0.5), before_kickoff
             ),
             "weather": _weather_adjustment(weather_row, weights.get("weather", 1.0)),
             "rest_days": (
@@ -294,15 +326,18 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
                 if game["kickoff_at"] else 0.0
             ),
             "injuries": _injuries_adjustment(conn, team_id, weights.get("injuries", 1.0)),
-            "team_form": _team_form_adjustment(conn, team_id, weights.get("team_form", 1.0)),
+            "team_form": _team_form_adjustment(conn, team_id, weights.get("team_form", 1.0), before_season_week),
             "strength_of_schedule": _strength_of_schedule_adjustment(
-                conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5)
+                conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5),
+                before_season_week,
             ),
-            "elo": _elo_adjustment(conn, team_id, opponent_id, is_home, weights.get("elo", 0.35)),
+            "elo": _elo_adjustment(ratings, team_id, opponent_id, is_home, weights.get("elo", 0.35)),
             "pass_protection": _pass_protection_adjustment(
-                conn, team_id, opponent_id, weights.get("pass_protection", 0.5)
+                conn, team_id, opponent_id, weights.get("pass_protection", 0.5), before_season_week
             ),
-            "recency_trend": _recency_trend_adjustment(conn, team_id, window, weights.get("recency_trend", 0.5)),
+            "recency_trend": _recency_trend_adjustment(
+                conn, team_id, window, weights.get("recency_trend", 0.5), before_kickoff
+            ),
             "travel": _travel_adjustment(game, away_abbr, is_home, weights.get("travel", 0.5)),
         }
         breakdown[side] = {"baseline": baseline, **adjustments}
@@ -312,16 +347,20 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     away_final = apply("away", away_id, away_baseline, False, away_split["overall_avg"])
 
     home_final, away_final, anchor_delta = _apply_total_anchor(
-        conn, home_id, away_id, home_final, away_final, weather_row, weights
+        conn, home_id, away_id, home_final, away_final, weather_row, weights, before_season_week
     )
     breakdown["total_anchor_delta"] = anchor_delta
 
-    home_season_games = stats.current_season_sample_size(conn, home_id, game["season"], window)
-    away_season_games = stats.current_season_sample_size(conn, away_id, game["season"], window)
+    home_season_games = stats.current_season_sample_size(
+        conn, home_id, game["season"], window, before=before_kickoff
+    )
+    away_season_games = stats.current_season_sample_size(
+        conn, away_id, game["season"], window, before=before_kickoff
+    )
     confidence_score, confidence_label = _prediction_confidence(home_season_games, away_season_games, window)
 
     model_favorite = home_id if home_final >= away_final else away_id
-    upset_alert = model_favorite != _elo_favorite(conn, home_id, away_id)
+    upset_alert = model_favorite != _elo_favorite(ratings, home_id, away_id)
 
     return {
         "predicted_home_score": round(max(home_final, 0), 1),

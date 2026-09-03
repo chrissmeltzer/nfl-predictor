@@ -251,6 +251,31 @@ def test_upset_alert_false_when_model_agrees_with_elo(tmp_path):
     assert result["upset_alert"] is False
 
 
+def test_predict_game_backtest_ignores_finalized_games_that_happened_later(tmp_path):
+    limited_dir = tmp_path / "limited"
+    limited_dir.mkdir()
+    conn_limited = make_conn(limited_dir)
+    seed_game(conn_limited, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
+    seed_game(conn_limited, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    conn_limited.commit()
+    target_limited = conn_limited.execute("SELECT * FROM games WHERE id = 'target'").fetchone()
+    result_limited = predict.predict_game(conn_limited, WEIGHTS, target_limited)
+
+    full_dir = tmp_path / "full"
+    full_dir.mkdir()
+    conn_full = make_conn(full_dir)
+    seed_game(conn_full, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
+    seed_game(conn_full, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    # A lopsided game that happens *after* the target game -- must not leak into its prediction.
+    seed_game(conn_full, "g2", "A", "B", 55, 0, "2026-09-08T00:00Z")
+    conn_full.commit()
+    target_full = conn_full.execute("SELECT * FROM games WHERE id = 'target'").fetchone()
+    result_full = predict.predict_game(conn_full, WEIGHTS, target_full)
+
+    assert result_limited["predicted_home_score"] == result_full["predicted_home_score"]
+    assert result_limited["predicted_away_score"] == result_full["predicted_away_score"]
+
+
 def test_save_prediction_persists_row(tmp_path):
     conn = make_conn(tmp_path)
     seed_upcoming(conn)

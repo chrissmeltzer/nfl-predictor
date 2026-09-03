@@ -21,11 +21,22 @@ def _mov_multiplier(margin: int, elo_diff: float) -> float:
     return ((abs(margin) + 3) ** 0.8) / (7.5 + 0.006 * abs(elo_diff))
 
 
-def recompute_ratings(conn: sqlite3.Connection) -> dict[str, float]:
+def recompute_ratings(conn: sqlite3.Connection, before: tuple[int, int] | None = None) -> dict[str, float]:
+    """Replay every finalized game in chronological order to build current Elo ratings.
+
+    Pass `before=(season, week)` to stop the replay just short of that point, giving the
+    ratings as they stood right before that game -- used to backtest a past game without
+    leaking the results of games that hadn't happened yet.
+    """
     ratings = {row["id"]: BASE_RATING for row in conn.execute("SELECT id FROM teams").fetchall()}
-    games = conn.execute(
-        "SELECT * FROM games WHERE status = 'final' ORDER BY season ASC, week ASC, kickoff_at ASC, id ASC"
-    ).fetchall()
+    query = "SELECT * FROM games WHERE status = 'final'"
+    params: list = []
+    if before is not None:
+        season, week = before
+        query += " AND (season < ? OR (season = ? AND week < ?))"
+        params += [season, season, week]
+    query += " ORDER BY season ASC, week ASC, kickoff_at ASC, id ASC"
+    games = conn.execute(query, params).fetchall()
 
     current_season = None
     for game in games:

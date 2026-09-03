@@ -86,6 +86,60 @@ def test_rest_days_computed_from_previous_game(tmp_path):
     assert days == 7
 
 
+def test_recent_scoring_stats_ignores_games_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 10, 0, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "B", 100, 0, "2026-10-01T00:00Z")
+    conn.commit()
+
+    result = stats.recent_scoring_stats(conn, "A", window=8, before="2026-09-15T00:00Z")
+    assert result["avg_points_scored"] == 10
+    assert result["games_counted"] == 1
+
+
+def test_recency_weighted_scoring_ignores_games_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 10, 0, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "B", 100, 0, "2026-10-01T00:00Z")
+    conn.commit()
+
+    result = stats.recency_weighted_scoring(conn, "A", window=8, before="2026-09-15T00:00Z")
+    assert result["avg_points_scored"] == 10
+
+
+def test_home_away_split_ignores_games_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 30, 10, "2026-09-01T00:00Z")  # A home
+    seed_game(conn, "g2", "B", "A", 5, 5, "2026-10-01T00:00Z")  # after cutoff, A away
+
+    conn.commit()
+
+    result = stats.home_away_split(conn, "A", before="2026-09-15T00:00Z")
+    assert result["home_avg"] == 30
+    assert result["away_avg"] == 30  # no away games before cutoff -> falls back to overall_avg
+
+
+def test_head_to_head_ignores_meetings_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 21, 17, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "B", 100, 0, "2026-10-01T00:00Z")
+    conn.commit()
+
+    result = stats.head_to_head(conn, "A", "B", before="2026-09-15T00:00Z")
+    assert result["meetings"] == 1
+    assert result["avg_points_scored"] == 21
+
+
+def test_current_season_sample_size_ignores_games_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    for i in range(8):
+        seed_game(conn, f"g{i}", "A", "B", 20, 10, f"2026-09-{i + 1:02d}T00:00Z")
+    conn.commit()
+
+    count = stats.current_season_sample_size(conn, "A", season=2026, window=8, before="2026-09-05T00:00Z")
+    assert count == 4
+
+
 def seed_team_game_stat(conn, team_id, season, week, sacks_suffered, pass_attempts, def_sacks):
     db.upsert_team_game_stat(conn, {
         "team_id": team_id, "season": season, "week": week, "turnovers": 0,
@@ -112,3 +166,126 @@ def test_pass_rush_form_returns_none_when_no_data(tmp_path):
     result = stats.pass_rush_form(conn, "A", window=8)
     assert result["protection_rate"] is None
     assert result["pressure_rate"] is None
+
+
+def test_pass_rush_form_ignores_stats_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    seed_team_game_stat(conn, "A", 2026, 1, sacks_suffered=2, pass_attempts=30, def_sacks=1)
+    seed_team_game_stat(conn, "B", 2026, 1, sacks_suffered=1, pass_attempts=28, def_sacks=3)
+    # week 2 stats should be excluded when backtesting as of week 2
+    seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
+    seed_team_game_stat(conn, "A", 2026, 2, sacks_suffered=10, pass_attempts=10, def_sacks=0)
+    seed_team_game_stat(conn, "B", 2026, 2, sacks_suffered=10, pass_attempts=10, def_sacks=0)
+    conn.commit()
+
+    result = stats.pass_rush_form(conn, "A", window=8, before=(2026, 2))
+    assert result["protection_rate"] == 2 / 32
+    assert result["pressure_rate"] == 1 / 29
+
+
+def test_turnover_form_ignores_stats_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 1, "turnovers": 1,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 2, "turnovers": 5,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    conn.commit()
+
+    result = stats.turnover_form(conn, "A", window=8, before=(2026, 2))
+    assert result["avg_turnovers_committed"] == 1
+
+
+def test_turnovers_forced_ignores_stats_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 1, "turnovers": 2,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 2, "turnovers": 9,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    conn.commit()
+
+    result = stats.turnovers_forced(conn, "A", window=8, before=(2026, 2))
+    assert result["avg_turnovers_forced"] == 2
+
+
+def test_epa_form_ignores_stats_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": 0.1, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 2, "turnovers": 0,
+        "epa_offense": 0.9, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": -0.2, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 2, "turnovers": 0,
+        "epa_offense": -0.8, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    conn.commit()
+
+    result = stats.epa_form(conn, "A", window=8, before=(2026, 2))
+    assert result["epa_offense_avg"] == 0.1
+    assert result["epa_allowed_avg"] == -0.2
+
+
+def test_pace_form_ignores_stats_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": 60,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "A", "season": 2026, "week": 2, "turnovers": 0,
+        "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": 100,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    conn.commit()
+
+    result = stats.pace_form(conn, "A", window=8, before=(2026, 2))
+    assert result == 60
+
+
+def test_strength_of_schedule_ignores_opponent_games_after_cutoff(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": 0.2, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 2, "turnovers": 0,
+        "epa_offense": 0.9, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    conn.commit()
+
+    result = stats.strength_of_schedule(conn, "A", window=8, before=(2026, 2))
+    assert result["opponent_epa_avg"] == 0.2
