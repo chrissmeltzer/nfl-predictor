@@ -48,12 +48,23 @@
   <section class="detail-card"><p class="eyebrow">Head to head</p><h2>Historical context</h2>{% if head_to_head.avg_points_scored is not none %}<p class="condition-value">{{ '%.1f' | format(head_to_head.avg_points_scored) }} average points scored</p>{% else %}<p class="muted">No prior head-to-head sample is available.</p>{% endif %}</section>
 </div>
 
-{% if timeline_meetings > 0 %}
-<section class="detail-card timeline-card">
+{% if matchup_history %}
+<section class="detail-card matchup-history-card">
   <p class="eyebrow">Head to head</p>
-  <h2>Scoring trend · last {{ timeline_meetings }} meeting{{ 's' if timeline_meetings != 1 else '' }}</h2>
-  <canvas id="h2h-chart" height="90" role="img" aria-label="Line chart of {{ away_team.name }} and {{ home_team.name }} points scored across their last {{ timeline_meetings }} meetings"></canvas>
-  <div class="timeline-legend"><span><i style="background: var(--violet)"></i>{{ home_team.abbreviation }}</span><span><i style="background: var(--cyan)"></i>{{ away_team.abbreviation }}</span></div>
+  <h2>Past matchups · last {{ matchup_history|length }} meeting{{ 's' if matchup_history|length != 1 else '' }}</h2>
+  <div class="matchup-history-list">
+    <div class="matchup-history-header">
+      <span>Date</span><span>{{ home_team.abbreviation }}</span><span></span><span>{{ away_team.abbreviation }}</span>
+    </div>
+    {% for m in matchup_history %}
+    <div class="matchup-history-row">
+      <span class="matchup-history-date">{{ m.date_label }}</span>
+      <span class="matchup-history-score {{ 'matchup-history-win' if m.winner == 'home' }}">{{ m.home_score }}</span>
+      <span class="matchup-history-sep">–</span>
+      <span class="matchup-history-score {{ 'matchup-history-win' if m.winner == 'away' }}">{{ m.away_score }}</span>
+    </div>
+    {% endfor %}
+  </div>
 </section>
 {% endif %}
 
@@ -62,13 +73,8 @@
   <section class="detail-card"><h3>{{ away_team.name }}</h3>{% for injury in injuries_away %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong class="injury-badge {{ injury.impact.class }}">{{ injury.impact.label }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
   <section class="detail-card"><h3>{{ home_team.name }}</h3>{% for injury in injuries_home %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong class="injury-badge {{ injury.impact.class }}">{{ injury.impact.label }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
 </div>
-
-<script type="application/json" id="h2h-data">{{ timeline_chart_json | safe }}</script>
 {% endblock %}
 
 {% block scripts %}
-{% if timeline_meetings > 0 %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-{% endif %}
 <script src="{{ url_for('static', path='game_detail.js') }}" defer></script>
 {% endblock %}

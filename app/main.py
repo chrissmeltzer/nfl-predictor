@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -375,16 +374,19 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
     head_to_head_games = stats.head_to_head_games(conn, game["home_team_id"], game["away_team_id"])
     matchup = _game_view(conn, game, {home_team["id"]: home_team, away_team["id"]: away_team}, result)
 
-    timeline_chart = {
-        "labels": [
-            _format_kickoff(g["kickoff_at"]).split(" · ")[0] if g["kickoff_at"] else f"{g['season']} Wk {g['week']}"
-            for g in head_to_head_games
-        ],
-        "home": [g["team_score"] for g in head_to_head_games],
-        "away": [g["opponent_score"] for g in head_to_head_games],
-        "home_abbr": home_team["abbreviation"],
-        "away_abbr": away_team["abbreviation"],
-    }
+    matchup_history = [
+        {
+            "date_label": _format_kickoff(g["kickoff_at"]).split(" · ")[0]
+            if g["kickoff_at"] else f"{g['season']} Wk {g['week']}",
+            "season": g["season"],
+            "week": g["week"],
+            "home_score": g["team_score"],
+            "away_score": g["opponent_score"],
+            "winner": "home" if g["team_score"] > g["opponent_score"]
+            else "away" if g["opponent_score"] > g["team_score"] else None,
+        }
+        for g in reversed(head_to_head_games)
+    ]
 
     return templates.TemplateResponse(
         request,
@@ -394,8 +396,7 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
             home_logo=_logo_url(home_team), away_logo=_logo_url(away_team), weather=weather_row,
             weather_severity=_weather_severity(weather_row),
             injuries_home=_injury_view(injuries_home), injuries_away=_injury_view(injuries_away),
-            head_to_head=head_to_head, timeline_chart_json=json.dumps(timeline_chart).replace("<", "\\u003c"),
-            timeline_meetings=len(head_to_head_games),
+            head_to_head=head_to_head, matchup_history=matchup_history,
             teams=[home_team, away_team],
         ),
     )

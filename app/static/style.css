@@ -57,12 +57,18 @@ h1, h2, h3, p { margin-top: 0; } h1 { max-width: 680px; margin-bottom: .7rem; fo
 .injury-badge.impact-questionable { color: var(--cyan); background: rgba(34, 211, 238, .1); border-color: rgba(34, 211, 238, .3); }
 .injury-badge.impact-minor { color: var(--muted); }
 
-/* Head-to-head timeline chart */
-.timeline-card { padding: 1.5rem; margin-bottom: 2rem; }
-.timeline-card canvas { margin-top: 1rem; max-height: 260px; }
-.timeline-legend { display: flex; gap: 1.1rem; margin-top: .9rem; font-size: .78rem; color: var(--muted); font-weight: 700; }
-.timeline-legend span { display: inline-flex; align-items: center; gap: .4rem; }
-.timeline-legend i { width: 10px; height: 10px; border-radius: 3px; }
+/* Head-to-head matchup history */
+.matchup-history-card { padding: 1.5rem; margin-bottom: 2rem; }
+.matchup-history-list { display: grid; margin-top: .5rem; }
+.matchup-history-header, .matchup-history-row { display: grid; grid-template-columns: 1fr 2.5rem 1.25rem 2.5rem; align-items: center; gap: .5rem; }
+.matchup-history-header { padding-bottom: .6rem; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.matchup-history-header span:nth-child(2), .matchup-history-header span:nth-child(4) { text-align: center; }
+.matchup-history-row { padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.matchup-history-row:last-child { border-bottom: 0; }
+.matchup-history-date { color: var(--muted); font-size: .84rem; }
+.matchup-history-score { text-align: center; font-size: 1.05rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.matchup-history-win { color: var(--text); }
+.matchup-history-sep { text-align: center; color: var(--muted); }
 
 #rankings-table th[data-sort] { cursor: pointer; user-select: none; } #rankings-table th[data-sort]:hover { color: var(--cyan); }
 .metric-card { padding: 1.2rem; } .metric-card span { display: block; color: var(--muted); font-size: .77rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; } .metric-card strong { display: block; margin-top: .3rem; color: var(--cyan); font-size: 2rem; } .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 18px; background: rgba(17, 26, 46, .9); box-shadow: var(--shadow); } table { width: 100%; border-collapse: collapse; } th, td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; } th { color: var(--muted); font-size: .73rem; letter-spacing: .08em; text-transform: uppercase; } tr:last-child td { border-bottom: 0; }
