@@ -11,9 +11,16 @@ from app.reference import STADIUMS, canonical_abbreviation
 logger = logging.getLogger(__name__)
 
 GAMES_CSV_URL = "https://github.com/nflverse/nfldata/raw/master/data/games.csv"
+TEAM_STATS_CSV_URL = "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_{season}.csv"
 
 _ROOF_OUTDOOR_VALUES = {"outdoors", "open"}
 _ROOF_INDOOR_VALUES = {"dome", "closed"}
+
+TURNOVER_COLUMNS = ["interceptions", "rushing_fumbles_lost", "sack_fumbles_lost", "receiving_fumbles_lost"]
+EPA_COLUMNS = ["passing_epa", "rushing_epa"]
+PASSING_EPA_COLUMNS = ["passing_epa"]
+RUSHING_EPA_COLUMNS = ["rushing_epa"]
+PLAY_COLUMNS = ["attempts", "carries"]
 
 
 def parse_games_csv(csv_text: str, min_season: int) -> list[dict]:
@@ -59,3 +66,54 @@ def fetch_games_csv(client: httpx.Client, min_season: int) -> list[dict]:
     resp = client.get(GAMES_CSV_URL)
     resp.raise_for_status()
     return parse_games_csv(resp.text, min_season)
+
+
+def _sum_columns(row: dict, columns: list[str]) -> float:
+    total = 0.0
+    for column in columns:
+        value = row.get(column)
+        if not value:
+            continue
+        try:
+            total += float(value)
+        except ValueError:
+            continue
+    return total
+
+
+def parse_team_stats_csv(csv_text: str, min_season: int) -> list[dict]:
+    reader = csv.DictReader(io.StringIO(csv_text))
+    stats = []
+    for row in reader:
+        try:
+            season = int(row["season"])
+            week = int(row["week"])
+        except (KeyError, ValueError):
+            continue
+        if season < min_season:
+            continue
+        if row.get("season_type") and row["season_type"] != "REG":
+            continue
+
+        abbr = canonical_abbreviation(row.get("team", ""))
+        if abbr not in STADIUMS:
+            continue
+
+        plays_value = _sum_columns(row, PLAY_COLUMNS)
+        stats.append({
+            "team_abbreviation": abbr,
+            "season": season,
+            "week": week,
+            "turnovers": int(round(_sum_columns(row, TURNOVER_COLUMNS))),
+            "epa_offense": _sum_columns(row, EPA_COLUMNS),
+            "epa_passing": _sum_columns(row, PASSING_EPA_COLUMNS),
+            "epa_rushing": _sum_columns(row, RUSHING_EPA_COLUMNS),
+            "plays": plays_value if plays_value > 0 else None,
+        })
+    return stats
+
+
+def fetch_team_stats(client: httpx.Client, season: int) -> list[dict]:
+    resp = client.get(TEAM_STATS_CSV_URL.format(season=season))
+    resp.raise_for_status()
+    return parse_team_stats_csv(resp.text, min_season=season)

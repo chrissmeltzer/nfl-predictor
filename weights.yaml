@@ -4,4 +4,11 @@ head_to_head: 0.5
 weather: 1.0
 rest_days: 0.5
 injuries: 1.0
+team_form: 1.0
+strength_of_schedule: 0.5
+elo: 0.35
+total_points_anchor: 0.5
+pace: 0.3
+recency_trend: 0.5
+travel: 0.5
 recent_games_window: 8

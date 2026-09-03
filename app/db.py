@@ -60,6 +60,26 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS team_game_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id TEXT NOT NULL REFERENCES teams(id),
+    season INTEGER NOT NULL,
+    week INTEGER NOT NULL,
+    turnovers INTEGER NOT NULL DEFAULT 0,
+    epa_offense REAL,
+    epa_passing REAL,
+    epa_rushing REAL,
+    plays REAL,
+    UNIQUE(team_id, season, week)
+);
+CREATE INDEX IF NOT EXISTS idx_team_game_stats_team ON team_game_stats(team_id, season, week);
+
+CREATE TABLE IF NOT EXISTS team_ratings (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id),
+    elo_rating REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -87,7 +107,7 @@ def upsert_game(conn, game: dict) -> None:
     conn.execute(
         """
         INSERT INTO games (id, season, week, home_team_id, away_team_id, kickoff_at,
-                            venue_name, is_outdoor, lat, lon, status, home_score, away_score)
+                           venue_name, is_outdoor, lat, lon, status, home_score, away_score)
         VALUES (:id, :season, :week, :home_team_id, :away_team_id, :kickoff_at,
                 :venue_name, :is_outdoor, :lat, :lon, :status, :home_score, :away_score)
         ON CONFLICT(id) DO UPDATE SET
@@ -138,3 +158,28 @@ def replace_team_injuries(conn, team_id: str, injuries: list[dict], fetched_at: 
             "VALUES (?, ?, ?, ?, ?)",
             (team_id, injury["player_name"], injury["position"], injury["status"], fetched_at),
         )
+
+
+def upsert_team_game_stat(conn, row: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO team_game_stats (team_id, season, week, turnovers, epa_offense, epa_passing, epa_rushing, plays)
+        VALUES (:team_id, :season, :week, :turnovers, :epa_offense, :epa_passing, :epa_rushing, :plays)
+        ON CONFLICT(team_id, season, week) DO UPDATE SET
+            turnovers=excluded.turnovers, epa_offense=excluded.epa_offense,
+            epa_passing=excluded.epa_passing, epa_rushing=excluded.epa_rushing, plays=excluded.plays
+        """,
+        row,
+    )
+
+
+def upsert_team_rating(conn, team_id: str, elo_rating: float, updated_at: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO team_ratings (team_id, elo_rating, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(team_id) DO UPDATE SET
+            elo_rating=excluded.elo_rating, updated_at=excluded.updated_at
+        """,
+        (team_id, elo_rating, updated_at),
+    )
