@@ -84,6 +84,34 @@ def test_predict_game_applies_negative_injury_adjustment(tmp_path):
     assert result["breakdown"]["home"]["injuries"] < 0
 
 
+def test_recent_scoring_trend_weight_scales_baseline_toward_league_average(tmp_path):
+    conn = make_conn(tmp_path)
+    # Team A scores well above the league average (21.0) in its recent games,
+    # while Team B has no recorded games, so the home baseline for A is driven
+    # purely by A's own scoring average (no opponent-defense averaging).
+    db.upsert_team(conn, {"id": "X", "name": "Team X", "abbreviation": "X"})
+    seed_game(conn, "h1", "A", "X", 40, 7, "2026-07-01T00:00Z")
+    seed_game(conn, "h2", "A", "X", 40, 3, "2026-07-08T00:00Z")
+    seed_game(conn, "h3", "A", "X", 40, 10, "2026-07-15T00:00Z")
+    seed_upcoming(conn)
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    weights_full_trend = {**WEIGHTS, "recent_scoring_trend": 1.0}
+    weights_no_trend = {**WEIGHTS, "recent_scoring_trend": 0.0}
+
+    result_full = predict.predict_game(conn, weights_full_trend, game)
+    result_none = predict.predict_game(conn, weights_no_trend, game)
+
+    baseline_full = result_full["breakdown"]["home"]["baseline"]
+    baseline_none = result_none["breakdown"]["home"]["baseline"]
+
+    # weight=0.0 must collapse the baseline to the league average...
+    assert abs(baseline_none - 21.0) < 0.5
+    # ...while weight=1.0 must preserve Team A's actual elevated scoring average.
+    assert baseline_full > 25
+
+
 def test_save_prediction_persists_row(tmp_path):
     conn = make_conn(tmp_path)
     seed_upcoming(conn)
