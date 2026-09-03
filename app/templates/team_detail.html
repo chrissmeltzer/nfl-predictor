@@ -18,7 +18,11 @@
       <a href="/teams/{{ row.opponent.id }}"><img src="{{ row.opponent_logo }}" alt="{{ row.opponent.name }} logo" class="team-logo">{{ row.opponent.name }}</a>
       <small>{{ row.kickoff }}</small>
     </div>
-    <div class="schedule-score"><span>Projected</span><strong>{{ row.team_score }} – {{ row.opponent_score }}</strong></div>
+    <div class="schedule-score">
+      <span>Projected</span>
+      <strong>{{ row.team_score }} – {{ row.opponent_score }}</strong>
+      <span class="confidence-badge confidence-{{ row.confidence_label | lower }} confidence-badge-sm">{{ row.confidence_label }}</span>
+    </div>
     <div class="schedule-probability"><span>{{ row.team_probability }}% win chance</span><div class="probability-track"><i style="width: {{ row.team_probability }}%"></i></div></div>
     <a class="icon-link" href="/games/{{ row.game.id }}" aria-label="Open {{ team.name }} versus {{ row.opponent.name }} analysis">→</a>
   </article>

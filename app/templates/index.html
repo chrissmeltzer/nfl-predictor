@@ -40,7 +40,17 @@
       <div class="probability-track" aria-label="{{ matchup.away.name }} {{ matchup.away_probability }} percent win probability"><i style="width: {{ matchup.away_probability }}%"></i></div>
       <span>{{ matchup.home_probability }}%</span>
     </div>
-    <p class="pick-line"><span>Model edge</span><strong>{{ matchup.winner.name }}</strong></p>
+    <div class="card-footer-row">
+      <p class="pick-line"><span>Model edge</span><strong>{{ matchup.winner.name }}</strong></p>
+      <span class="confidence-badge confidence-{{ matchup.confidence_label | lower }}">{{ matchup.confidence_label }} confidence</span>
+    </div>
+    {% if matchup.analysis %}
+    <ul class="analysis-list">
+      {% for note in matchup.analysis[:2] %}
+      <li>{{ note }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
     <a class="card-link" href="/games/{{ matchup.game.id }}">Open game analysis <span>→</span></a>
   </article>
   {% endfor %}
