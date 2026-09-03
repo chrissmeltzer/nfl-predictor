@@ -33,3 +33,9 @@ def test_parse_games_csv_skips_games_without_final_scores():
     games = nflverse.parse_games_csv(load_fixture_csv(), min_season=2024)
     ids = {g["id"] for g in games}
     assert "2024_03_BUF_NE" not in ids
+
+
+def test_parse_games_csv_skips_games_with_unresolvable_team():
+    games = nflverse.parse_games_csv(load_fixture_csv(), min_season=2024)
+    ids = {g["id"] for g in games}
+    assert "2024_04_ZZZ_LAR" not in ids

@@ -4,3 +4,4 @@ game_id,season,game_type,week,gameday,weekday,gametime,away_team,away_score,home
 2024_02_OAK_KC,2024,REG,2,2024-09-15,Sunday,,OAK,10,KC,31,Home,21,41,0,,,,,,,,7,7,,,,,,,,,1,outdoors,grass,75,6,,,,,,,,KC00,Arrowhead Stadium
 2023_01_SEA_LAR,2023,REG,1,2023-09-10,Sunday,,SEA,13,LAR,30,Home,17,43,0,,,,,,,,7,7,,,,,,,,,1,outdoors,grass,80,5,,,,,,,,LAR00,SoFi Stadium
 2024_03_BUF_NE,2024,REG,3,2024-09-22,Sunday,,BUF,,NE,,Home,,,,,,,,,,,7,7,,,,,,,,,1,outdoors,grass,,,,,,,,,NE00,Gillette Stadium
+2024_04_ZZZ_LAR,2024,REG,4,2024-09-29,Sunday,,ZZZ,14,LAR,28,Home,14,42,0,,,,,,,,7,7,,,,,,,,,0,outdoors,grass,72,4,,,,,,,,LAR00,SoFi Stadium
