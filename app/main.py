@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app import db, predict, stats, sync
+from app import betting, db, predict, stats, sync
 from app.config import DB_PATH, STALENESS_HOURS, WEIGHTS_PATH
 from app.sources import espn
 
@@ -387,6 +387,7 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
         }
         for g in reversed(head_to_head_games)
     ]
+    betting_angles = betting.build_betting_angles(matchup, matchup_history)
 
     return templates.TemplateResponse(
         request,
@@ -396,7 +397,7 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
             home_logo=_logo_url(home_team), away_logo=_logo_url(away_team), weather=weather_row,
             weather_severity=_weather_severity(weather_row),
             injuries_home=_injury_view(injuries_home), injuries_away=_injury_view(injuries_away),
-            head_to_head=head_to_head, matchup_history=matchup_history,
+            head_to_head=head_to_head, matchup_history=matchup_history, betting=betting_angles,
             teams=[home_team, away_team],
         ),
     )

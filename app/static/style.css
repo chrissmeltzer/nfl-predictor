@@ -57,6 +57,13 @@ h1, h2, h3, p { margin-top: 0; } h1 { max-width: 680px; margin-bottom: .7rem; fo
 .injury-badge.impact-questionable { color: var(--cyan); background: rgba(34, 211, 238, .1); border-color: rgba(34, 211, 238, .3); }
 .injury-badge.impact-minor { color: var(--muted); }
 
+/* Betting angles */
+.betting-card { padding: 1.5rem; margin-bottom: 2rem; }
+.betting-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; padding: .85rem 0; border-top: 1px solid var(--line); }
+.betting-row strong { font-size: .95rem; }
+.betting-hint { margin: .25rem 0 0; max-width: 46ch; color: var(--muted); font-size: .82rem; }
+.betting-value { flex-shrink: 0; text-align: right; font-weight: 700; line-height: 1.5; white-space: nowrap; }
+
 /* Head-to-head matchup history */
 .matchup-history-card { padding: 1.5rem; margin-bottom: 2rem; }
 .matchup-history-list { display: grid; margin-top: .5rem; }

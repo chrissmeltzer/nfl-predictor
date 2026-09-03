@@ -48,6 +48,28 @@
   <section class="detail-card"><p class="eyebrow">Head to head</p><h2>Historical context</h2>{% if head_to_head.avg_points_scored is not none %}<p class="condition-value">{{ '%.1f' | format(head_to_head.avg_points_scored) }} average points scored</p>{% else %}<p class="muted">No prior head-to-head sample is available.</p>{% endif %}</section>
 </div>
 
+{% if betting %}
+<section class="detail-card betting-card">
+  <div class="analysis-box-header">
+    <p class="eyebrow">Betting angles</p>
+    <h2>Model-implied numbers</h2>
+    <span class="confidence-badge confidence-{{ betting.confidence_label | lower }}">{{ betting.confidence_label }} confidence</span>
+  </div>
+  <div class="betting-row">
+    <div><strong>Moneyline</strong><p class="betting-hint">Value if your sportsbook beats this number on either side.</p></div>
+    <div class="betting-value">{{ betting.moneyline.favorite }} {{ betting.moneyline.favorite_odds }}<br>{{ betting.moneyline.underdog }} +{{ betting.moneyline.underdog_odds }}</div>
+  </div>
+  <div class="betting-row">
+    <div><strong>Spread</strong><p class="betting-hint">A posted line smaller than this favors {{ betting.spread.favorite }}; bigger favors taking the points with {{ betting.spread.underdog }}.</p></div>
+    <div class="betting-value">{{ betting.spread.favorite }} -{{ betting.spread.margin }}</div>
+  </div>
+  <div class="betting-row">
+    <div><strong>Total</strong><p class="betting-hint">Lean Over if the book's total is below ~{{ betting.total.projected }}, Under if above.{% if betting.total.history_avg is not none %} These teams have averaged {{ betting.total.history_avg }} combined points historically.{% endif %}</p></div>
+    <div class="betting-value">{{ betting.total.projected }}</div>
+  </div>
+</section>
+{% endif %}
+
 {% if matchup_history %}
 <section class="detail-card matchup-history-card">
   <p class="eyebrow">Head to head</p>

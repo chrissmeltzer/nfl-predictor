@@ -175,6 +175,32 @@ def test_game_detail_final_game_without_saved_prediction_has_no_reveal_badge(tmp
     assert "Missed by" not in response.text
 
 
+def test_game_detail_upcoming_game_shows_betting_angles(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.get("/games/g1")
+
+    assert response.status_code == 200
+    assert "Betting angles" in response.text
+    assert "Moneyline" in response.text
+
+
+def test_game_detail_final_game_hides_betting_angles(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    conn = db.get_connection(tmp_path / "test.db")
+    db.upsert_game(conn, {
+        "id": "g_final", "season": 2026, "week": 1, "home_team_id": "A", "away_team_id": "B",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "X", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "final", "home_score": 24, "away_score": 17,
+    })
+    conn.commit()
+    conn.close()
+
+    response = client.get("/games/g_final")
+
+    assert response.status_code == 200
+    assert "Betting angles" not in response.text
+
+
 def test_team_detail_shows_recent_pick_accuracy(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     conn = db.get_connection(tmp_path / "test.db")
