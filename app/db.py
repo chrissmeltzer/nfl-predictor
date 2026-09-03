@@ -83,6 +83,23 @@ CREATE TABLE IF NOT EXISTS team_ratings (
     elo_rating REAL NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS picks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    game_id TEXT NOT NULL REFERENCES games(id),
+    picked_team_id TEXT NOT NULL REFERENCES teams(id),
+    created_at TEXT NOT NULL,
+    UNIQUE(player_id, game_id)
+);
+CREATE INDEX IF NOT EXISTS idx_picks_player ON picks(player_id);
+CREATE INDEX IF NOT EXISTS idx_picks_game ON picks(game_id);
 """
 
 # Columns that may be missing from a team_game_stats table created by an older version of
@@ -210,3 +227,55 @@ def upsert_team_rating(conn, team_id: str, elo_rating: float, updated_at: str) -
         """,
         (team_id, elo_rating, updated_at),
     )
+
+
+def get_or_create_player(conn, name: str, created_at: str) -> sqlite3.Row:
+    conn.execute(
+        "INSERT INTO players (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
+        (name, created_at),
+    )
+    return conn.execute("SELECT * FROM players WHERE name = ?", (name,)).fetchone()
+
+
+def get_player_by_id(conn, player_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
+
+
+def get_all_players(conn) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM players ORDER BY name COLLATE NOCASE").fetchall()
+
+
+def upsert_pick(conn, player_id: int, game_id: str, picked_team_id: str, created_at: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO picks (player_id, game_id, picked_team_id, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(player_id, game_id) DO UPDATE SET
+            picked_team_id=excluded.picked_team_id, created_at=excluded.created_at
+        """,
+        (player_id, game_id, picked_team_id, created_at),
+    )
+
+
+def get_player_picks_for_games(conn, player_id: int, game_ids: list[str]) -> dict[str, str]:
+    if not game_ids:
+        return {}
+    placeholders = ",".join("?" for _ in game_ids)
+    rows = conn.execute(
+        f"SELECT game_id, picked_team_id FROM picks WHERE player_id = ? AND game_id IN ({placeholders})",
+        (player_id, *game_ids),
+    ).fetchall()
+    return {row["game_id"]: row["picked_team_id"] for row in rows}
+
+
+def get_decided_picks(conn) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT p.player_id, pl.name AS player_name, g.season, g.week, p.picked_team_id,
+               g.home_team_id, g.away_team_id, g.home_score, g.away_score
+        FROM picks p
+        JOIN games g ON g.id = p.game_id
+        JOIN players pl ON pl.id = p.player_id
+        WHERE g.status = 'final'
+        """
+    ).fetchall()
