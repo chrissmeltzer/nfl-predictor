@@ -1,0 +1,15 @@
+{
+  "injuries": [
+    {
+      "team": {"id": "26", "abbreviation": "SEA"},
+      "injuries": [
+        {"status": "Out", "athlete": {"displayName": "Zach Charbonnet", "position": {"abbreviation": "RB"}}},
+        {"status": "Questionable", "athlete": {"displayName": "Amari Kight", "position": {"abbreviation": "OT"}}}
+      ]
+    },
+    {
+      "team": {"id": "17", "abbreviation": "NE"},
+      "injuries": []
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "events": [
+    {
+      "id": "401872001",
+      "date": "2026-09-10T00:20Z",
+      "season": {"year": 2026, "type": 2},
+      "week": {"number": 1},
+      "competitions": [
+        {
+          "date": "2026-09-10T00:20Z",
+          "venue": {"id": "3673", "fullName": "Lumen Field", "indoor": false},
+          "competitors": [
+            {"homeAway": "home", "score": "27", "team": {"id": "26", "abbreviation": "SEA"}},
+            {"homeAway": "away", "score": "20", "team": {"id": "17", "abbreviation": "NE"}}
+          ],
+          "status": {"type": {"name": "STATUS_FINAL", "completed": true}}
+        }
+      ]
+    },
+    {
+      "id": "401872002",
+      "date": "2026-09-14T17:00Z",
+      "season": {"year": 2026, "type": 2},
+      "week": {"number": 1},
+      "competitions": [
+        {
+          "date": "2026-09-14T17:00Z",
+          "venue": {"id": "3025", "fullName": "U.S. Bank Stadium", "indoor": true},
+          "competitors": [
+            {"homeAway": "home", "score": "0", "team": {"id": "16", "abbreviation": "MIN"}},
+            {"homeAway": "away", "score": "0", "team": {"id": "22", "abbreviation": "ARI"}}
+          ],
+          "status": {"type": {"name": "STATUS_SCHEDULED", "completed": false}}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "sports": [
+    {
+      "leagues": [
+        {
+          "teams": [
+            {"team": {"id": "22", "abbreviation": "ARI", "displayName": "Arizona Cardinals"}},
+            {"team": {"id": "26", "abbreviation": "SEA", "displayName": "Seattle Seahawks"}},
+            {"team": {"id": "17", "abbreviation": "NE", "displayName": "New England Patriots"}}
+          ]
+        }
+      ]
+    }
+  ]
+}
