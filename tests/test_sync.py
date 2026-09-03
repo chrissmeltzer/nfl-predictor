@@ -157,6 +157,42 @@ def test_sync_weather_for_upcoming_continues_past_one_failure(tmp_path, monkeypa
     assert ok_row["temp_f"] == 55
 
 
+def test_sync_predictions_saves_a_row_for_each_scheduled_game(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
+    db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
+    db.upsert_game(conn, {
+        "id": "g1", "season": 2026, "week": 1, "home_team_id": "26", "away_team_id": "17",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "Lumen Field", "is_outdoor": 1,
+        "lat": 47.5952, "lon": -122.3316, "status": "scheduled",
+        "home_score": None, "away_score": None,
+    })
+    conn.commit()
+
+    sync.sync_predictions(conn, weights={"recent_games_window": 8})
+
+    row = conn.execute("SELECT * FROM predictions WHERE game_id = 'g1'").fetchone()
+    assert row is not None
+
+
+def test_sync_predictions_skips_final_games(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
+    db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
+    db.upsert_game(conn, {
+        "id": "g1", "season": 2026, "week": 1, "home_team_id": "26", "away_team_id": "17",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "Lumen Field", "is_outdoor": 1,
+        "lat": 47.5952, "lon": -122.3316, "status": "final",
+        "home_score": 24, "away_score": 17,
+    })
+    conn.commit()
+
+    sync.sync_predictions(conn, weights={"recent_games_window": 8})
+
+    row = conn.execute("SELECT * FROM predictions WHERE game_id = 'g1'").fetchone()
+    assert row is None
+
+
 def test_sync_injuries_for_upcoming_continues_past_one_failure(tmp_path, monkeypatch):
     conn = make_conn(tmp_path)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})

@@ -76,6 +76,17 @@ def recency_weighted_scoring(conn: sqlite3.Connection, team_id: str, window: int
     return {"avg_points_scored": weighted_scored / weight_sum}
 
 
+def current_season_sample_size(conn: sqlite3.Connection, team_id: str, season: int, window: int) -> int:
+    """Count of the team's most recent `window` completed games that fall within `season`.
+
+    Historical seasons are always fully backfilled, so "games played, ever" saturates at
+    `window` before a new season even starts and can't signal early-season uncertainty.
+    How many of those recent games are from the *current* season actually can.
+    """
+    games = _team_games(conn, team_id, limit=window)
+    return sum(1 for g in games if g["season"] == season)
+
+
 def home_away_split(conn: sqlite3.Connection, team_id: str) -> dict:
     games = _team_games(conn, team_id)
     if not games:

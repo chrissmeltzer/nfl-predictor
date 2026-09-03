@@ -145,7 +145,30 @@ def _build_analysis(breakdown: dict, home_name: str, away_name: str) -> list[str
     return sentences
 
 
-def _game_view(game, teams, result: dict, selected_team_id: str | None = None) -> dict:
+_REVEAL_HIT_MARGIN = 3.0
+
+
+def _reveal(conn, game) -> dict | None:
+    if game["status"] != "final":
+        return None
+    saved = predict.get_latest_prediction(conn, game["id"])
+    if saved is None:
+        return None
+    predicted_home = saved["predicted_home_score"]
+    predicted_away = saved["predicted_away_score"]
+    margin_error = abs(
+        (predicted_home - predicted_away) - (game["home_score"] - game["away_score"])
+    )
+    hit = margin_error <= _REVEAL_HIT_MARGIN
+    return {
+        "predicted_home_score": predicted_home,
+        "predicted_away_score": predicted_away,
+        "hit": hit,
+        "label": "Nailed it" if hit else f"Missed by {margin_error:.0f}",
+    }
+
+
+def _game_view(conn, game, teams, result: dict, selected_team_id: str | None = None) -> dict:
     home = teams[game["home_team_id"]]
     away = teams[game["away_team_id"]]
     home_score = result["predicted_home_score"]
@@ -167,6 +190,8 @@ def _game_view(game, teams, result: dict, selected_team_id: str | None = None) -
         "confidence_score": result.get("confidence_score"),
         "confidence_label": result.get("confidence_label", "Moderate"),
         "analysis": _build_analysis(breakdown, home["name"], away["name"]),
+        "reveal": _reveal(conn, game),
+        "upset_alert": result.get("upset_alert", False) and game["status"] != "final",
     }
     if selected_team_id:
         is_home = game["home_team_id"] == selected_team_id
@@ -201,7 +226,7 @@ def trigger_sync(conn=Depends(get_db)):
 
 
 @app.get("/", response_class=HTMLResponse)
-def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
+def schedule(request: Request, week: int | None = None, sort: str | None = None, conn=Depends(get_db)):
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         season, current_week = espn.fetch_current_week(client)
         if _is_stale(conn):
@@ -215,12 +240,16 @@ def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
     teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
 
     weights = predict.load_weights(WEIGHTS_PATH)
-    matchups = [_game_view(game, teams, predict.predict_game(conn, weights, game)) for game in games]
+    matchups = [_game_view(conn, game, teams, predict.predict_game(conn, weights, game)) for game in games]
+    if sort == "confidence":
+        matchups.sort(key=lambda m: m["confidence_score"] if m["confidence_score"] is not None else 0)
 
     return templates.TemplateResponse(
         request,
         "index.html",
-        _template_context(request, matchups=matchups, teams=list(teams.values()), week=week, season=season),
+        _template_context(
+            request, matchups=matchups, teams=list(teams.values()), week=week, season=season, sort=sort
+        ),
     )
 
 
@@ -255,7 +284,9 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
     ).fetchall()
     teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
     weights = predict.load_weights(WEIGHTS_PATH)
-    schedule_rows = [_game_view(game, teams, predict.predict_game(conn, weights, game), team_id) for game in games]
+    schedule_rows = [
+        _game_view(conn, game, teams, predict.predict_game(conn, weights, game), team_id) for game in games
+    ]
     upcoming = [row for row in schedule_rows if row["game"]["status"] != "final"]
 
     return templates.TemplateResponse(
@@ -268,6 +299,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
             season=current_season,
             schedule_rows=schedule_rows,
             upcoming_count=len(upcoming),
+            streak=_recent_pick_accuracy(conn, team_id),
             teams=list(teams.values()),
         ),
     )
@@ -289,7 +321,7 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
     injuries_home = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["home_team_id"],)).fetchall()
     injuries_away = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["away_team_id"],)).fetchall()
     head_to_head = stats.head_to_head(conn, game["home_team_id"], game["away_team_id"])
-    matchup = _game_view(game, {home_team["id"]: home_team, away_team["id"]: away_team}, result)
+    matchup = _game_view(conn, game, {home_team["id"]: home_team, away_team["id"]: away_team}, result)
 
     return templates.TemplateResponse(
         request,
@@ -300,6 +332,80 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
             injuries_home=injuries_home, injuries_away=injuries_away, head_to_head=head_to_head,
             teams=[home_team, away_team],
         ),
+    )
+
+
+def _recent_pick_accuracy(conn, team_id: str, limit: int = 5) -> dict | None:
+    rows = conn.execute(
+        """
+        SELECT g.home_team_id, g.home_score, g.away_score,
+               p.predicted_home_score, p.predicted_away_score
+        FROM games g
+        JOIN predictions p ON p.game_id = g.id
+        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
+          AND p.id IN (SELECT MAX(id) FROM predictions GROUP BY game_id)
+        ORDER BY g.kickoff_at DESC, g.id DESC
+        LIMIT ?
+        """,
+        (team_id, team_id, limit),
+    ).fetchall()
+    if not rows:
+        return None
+    correct = sum(
+        1 for row in rows
+        if (row["home_score"] >= row["away_score"]) == (row["predicted_home_score"] >= row["predicted_away_score"])
+    )
+    return {"correct": correct, "total": len(rows)}
+
+
+def _team_record(conn, team_id: str, season: int) -> str:
+    games = conn.execute(
+        "SELECT home_team_id, home_score, away_score FROM games "
+        "WHERE season = ? AND status = 'final' AND (home_team_id = ? OR away_team_id = ?)",
+        (season, team_id, team_id),
+    ).fetchall()
+    wins = losses = ties = 0
+    for g in games:
+        team_score = g["home_score"] if g["home_team_id"] == team_id else g["away_score"]
+        opponent_score = g["away_score"] if g["home_team_id"] == team_id else g["home_score"]
+        if team_score > opponent_score:
+            wins += 1
+        elif team_score < opponent_score:
+            losses += 1
+        else:
+            ties += 1
+    return f"{wins}-{losses}-{ties}" if ties else f"{wins}-{losses}"
+
+
+@app.get("/rankings", response_class=HTMLResponse)
+def rankings(request: Request, conn=Depends(get_db)):
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        season, _ = espn.fetch_current_week(client)
+
+    rows = conn.execute(
+        """
+        SELECT t.*, COALESCE(r.elo_rating, 1500.0) AS elo_rating
+        FROM teams t
+        LEFT JOIN team_ratings r ON r.team_id = t.id
+        ORDER BY elo_rating DESC
+        """
+    ).fetchall()
+    ranked_teams = [
+        {
+            "rank": i,
+            "team": row,
+            "logo": _logo_url(row),
+            "elo_rating": round(row["elo_rating"]),
+            "record": _team_record(conn, row["id"], season),
+        }
+        for i, row in enumerate(rows, start=1)
+    ]
+    teams = conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
+
+    return templates.TemplateResponse(
+        request,
+        "rankings.html",
+        _template_context(request, rankings=ranked_teams, teams=list(teams), season=season),
     )
 
 

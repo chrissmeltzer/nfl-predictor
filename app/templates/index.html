@@ -16,7 +16,10 @@
 
 <section class="section-heading">
   <div><p class="eyebrow">This week</p><h2>Projected matchups</h2></div>
-  <p>{{ matchups | length }} games sorted by kickoff</p>
+  <div class="sort-toggle">
+    <a href="?week={{ week }}" class="sort-link{{ ' sort-link-active' if sort != 'confidence' else '' }}">By kickoff</a>
+    <a href="?week={{ week }}&amp;sort=confidence" class="sort-link{{ ' sort-link-active' if sort == 'confidence' else '' }}">Riskiest first</a>
+  </div>
 </section>
 
 {% if matchups %}
@@ -29,7 +32,13 @@
         <img src="{{ matchup.away_logo }}" alt="{{ matchup.away.name }} logo" class="team-logo">
         <span>{{ matchup.away.abbreviation }}</span>
       </a>
-      <div class="score-prediction"><strong>{{ matchup.away_score }}<small>–</small>{{ matchup.home_score }}</strong><span>Projected</span></div>
+      <div class="score-prediction">
+        {% if matchup.reveal %}
+        <strong>{{ matchup.game.away_score }}<small>–</small>{{ matchup.game.home_score }}</strong><span>Final <del>{{ matchup.reveal.predicted_away_score }}–{{ matchup.reveal.predicted_home_score }}</del></span>
+        {% else %}
+        <strong>{{ matchup.away_score }}<small>–</small>{{ matchup.home_score }}</strong><span>Projected</span>
+        {% endif %}
+      </div>
       <a href="/teams/{{ matchup.home.id }}" class="team-lockup team-lockup-right">
         <img src="{{ matchup.home_logo }}" alt="{{ matchup.home.name }} logo" class="team-logo">
         <span>{{ matchup.home.abbreviation }}</span>
@@ -42,7 +51,16 @@
     </div>
     <div class="card-footer-row">
       <p class="pick-line"><span>Model edge</span><strong>{{ matchup.winner.name }}</strong></p>
-      <span class="confidence-badge confidence-{{ matchup.confidence_label | lower }}">{{ matchup.confidence_label }} confidence</span>
+      <div class="badge-group">
+        {% if matchup.upset_alert %}
+        <span class="upset-badge">⚡ Upset Alert</span>
+        {% endif %}
+        {% if matchup.reveal %}
+        <span class="reveal-badge reveal-{{ 'hit' if matchup.reveal.hit else 'miss' }}">{{ matchup.reveal.label }}</span>
+        {% else %}
+        <span class="confidence-badge confidence-{{ matchup.confidence_label | lower }}">{{ matchup.confidence_label }} confidence</span>
+        {% endif %}
+      </div>
     </div>
     {% if matchup.analysis %}
     <ul class="analysis-list">

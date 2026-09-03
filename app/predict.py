@@ -171,6 +171,15 @@ def _elo_adjustment(conn, team_id: str, opponent_id: str, is_home: bool, weight:
     return weight * _clamp(rating_diff / 25.0, -7, 7)
 
 
+def _elo_favorite(conn, home_id: str, away_id: str) -> str:
+    """Which team Elo alone (rating + home field, no other factors) would favor -- used to
+    flag when the full model's pick diverges from the raw power rating.
+    """
+    home_rating = stats.get_team_rating(conn, home_id) + elo.HOME_FIELD_ADVANTAGE
+    away_rating = stats.get_team_rating(conn, away_id)
+    return home_id if home_rating >= away_rating else away_id
+
+
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     radius = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -230,13 +239,15 @@ def _apply_total_anchor(
     return new_home, new_away, blended_total - predicted_total
 
 
-def _prediction_confidence(home_games_counted: int, away_games_counted: int) -> tuple[int, str]:
-    """Rough confidence score based on how much real recent-game data underlies the
+def _prediction_confidence(home_season_games: int, away_season_games: int, window: int) -> tuple[int, str]:
+    """Rough confidence score based on how much *current-season* game data underlies the
     prediction. Not a statistically calibrated probability -- just a UI-facing signal that
-    early-season or sparse-data predictions should be trusted less.
+    early-season predictions (still leaning on last year's roster and form) should be
+    trusted less than ones backed by a full season-to-date sample.
     """
-    combined = min(home_games_counted, away_games_counted)
-    score = 30 + min(combined, 8) / 8 * 60
+    window = max(window, 1)
+    combined = min(home_season_games, away_season_games)
+    score = 30 + min(combined, window) / window * 60
     score = round(score)
     label = "Low" if score < 50 else ("Moderate" if score < 75 else "High")
     return score, label
@@ -305,9 +316,12 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     )
     breakdown["total_anchor_delta"] = anchor_delta
 
-    confidence_score, confidence_label = _prediction_confidence(
-        home_recent["games_counted"], away_recent["games_counted"]
-    )
+    home_season_games = stats.current_season_sample_size(conn, home_id, game["season"], window)
+    away_season_games = stats.current_season_sample_size(conn, away_id, game["season"], window)
+    confidence_score, confidence_label = _prediction_confidence(home_season_games, away_season_games, window)
+
+    model_favorite = home_id if home_final >= away_final else away_id
+    upset_alert = model_favorite != _elo_favorite(conn, home_id, away_id)
 
     return {
         "predicted_home_score": round(max(home_final, 0), 1),
@@ -315,7 +329,19 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
         "confidence_score": confidence_score,
         "confidence_label": confidence_label,
         "breakdown": breakdown,
+        "upset_alert": upset_alert,
     }
+
+
+def get_latest_prediction(conn: sqlite3.Connection, game_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT predicted_home_score, predicted_away_score FROM predictions "
+        "WHERE game_id = ? ORDER BY id DESC LIMIT 1",
+        (game_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"predicted_home_score": row["predicted_home_score"], "predicted_away_score": row["predicted_away_score"]}
 
 
 def save_prediction(conn: sqlite3.Connection, game_id: str, result: dict, weights: dict) -> None:

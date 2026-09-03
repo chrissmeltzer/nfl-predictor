@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app import db, elo
-from app.config import SYNC_SEASONS_BACK
+from app import db, elo, predict
+from app.config import SYNC_SEASONS_BACK, WEIGHTS_PATH
 from app.reference import STADIUMS, canonical_abbreviation
 from app.sources import espn, nflverse, weather
 
@@ -114,6 +114,18 @@ def sync_injuries_for_upcoming(conn, client: httpx.Client) -> None:
     conn.commit()
 
 
+def sync_predictions(conn, weights: dict) -> None:
+    """Snapshot a prediction for every currently-scheduled game, so that once a game goes
+    final there's a saved pre-game prediction to compare against the real result -- rather
+    than relying on someone having viewed that game's detail page before kickoff.
+    """
+    games = conn.execute("SELECT * FROM games WHERE status = 'scheduled'").fetchall()
+    for game in games:
+        result = predict.predict_game(conn, weights, game)
+        predict.save_prediction(conn, game["id"], result, weights)
+    conn.commit()
+
+
 def sync_all(conn, client: httpx.Client, current_season: int) -> None:
     sync_teams(conn, client)
     sync_historical(conn, client, min_season=current_season - SYNC_SEASONS_BACK, max_season=current_season)
@@ -124,5 +136,6 @@ def sync_all(conn, client: httpx.Client, current_season: int) -> None:
         sync_schedule(conn, client, season, w)
     sync_weather_for_upcoming(conn, client)
     sync_injuries_for_upcoming(conn, client)
+    sync_predictions(conn, predict.load_weights(WEIGHTS_PATH))
     db.set_meta(conn, "last_synced_at", _now_iso())
     conn.commit()

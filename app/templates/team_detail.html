@@ -4,7 +4,12 @@
 <section class="team-hero">
   <img src="{{ team_logo }}" alt="{{ team.name }} logo" class="team-logo team-logo-xl">
   <div><p class="eyebrow">Team explorer</p><h1>{{ team.name }}</h1><p>Full schedule predictions, including projected scores and win probability.</p></div>
-  <div class="hero-stat"><span>Upcoming</span><strong>{{ upcoming_count }}</strong><small>games in the database</small></div>
+  <div class="hero-stat-group">
+    <div class="hero-stat"><span>Upcoming</span><strong>{{ upcoming_count }}</strong><small>games in the database</small></div>
+    {% if streak %}
+    <div class="hero-stat"><span>Model accuracy</span><strong>{{ streak.correct }}/{{ streak.total }}</strong><small>last {{ streak.total }} picks</small></div>
+    {% endif %}
+  </div>
 </section>
 
 <section class="section-heading"><div><p class="eyebrow">Schedule outlook</p><h2>Every predicted matchup</h2></div><a class="text-link" href="/">View weekly board →</a></section>
@@ -19,9 +24,18 @@
       <small>{{ row.kickoff }}</small>
     </div>
     <div class="schedule-score">
+      {% if row.reveal %}
+      <span>Final</span>
+      <strong>{{ row.game.home_score if row.is_home else row.game.away_score }} – {{ row.game.away_score if row.is_home else row.game.home_score }}</strong>
+      <span class="reveal-badge reveal-{{ 'hit' if row.reveal.hit else 'miss' }} reveal-badge-sm">{{ row.reveal.label }}</span>
+      {% else %}
       <span>Projected</span>
       <strong>{{ row.team_score }} – {{ row.opponent_score }}</strong>
-      <span class="confidence-badge confidence-{{ row.confidence_label | lower }} confidence-badge-sm">{{ row.confidence_label }}</span>
+      <div class="badge-group">
+        {% if row.upset_alert %}<span class="upset-badge">⚡ Upset</span>{% endif %}
+        <span class="confidence-badge confidence-{{ row.confidence_label | lower }} confidence-badge-sm">{{ row.confidence_label }}</span>
+      </div>
+      {% endif %}
     </div>
     <div class="schedule-probability"><span>{{ row.team_probability }}% win chance</span><div class="probability-track"><i style="width: {{ row.team_probability }}%"></i></div></div>
     <a class="icon-link" href="/games/{{ row.game.id }}" aria-label="Open {{ team.name }} versus {{ row.opponent.name }} analysis">→</a>

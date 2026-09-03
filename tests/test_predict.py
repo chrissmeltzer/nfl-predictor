@@ -145,6 +145,112 @@ def test_pass_protection_adjustment_is_zero_without_stats_data(tmp_path):
     assert result["breakdown"]["home"]["pass_protection"] == 0.0
 
 
+def test_confidence_reflects_current_season_sample_not_lifetime_games(tmp_path):
+    conn = make_conn(tmp_path)
+    # A full season of history between these two teams, entirely in a prior season -- a
+    # lifetime-games-ever-played count would already be saturated before the new season
+    # kicks off, which is exactly the bug: confidence should be low in a season with zero
+    # current-season games between these teams, regardless of how much old data exists.
+    for i in range(8):
+        db.upsert_game(conn, {
+            "id": f"last{i}", "season": 2025, "week": i + 1, "home_team_id": "A", "away_team_id": "B",
+            "kickoff_at": f"2025-09-{i + 1:02d}T00:00Z", "venue_name": "X", "is_outdoor": True,
+            "lat": 0, "lon": 0, "status": "final", "home_score": 24, "away_score": 17,
+        })
+    db.upsert_game(conn, {
+        "id": "g2", "season": 2026, "week": 1, "home_team_id": "A", "away_team_id": "B",
+        "kickoff_at": "2026-09-07T00:00Z", "venue_name": "X", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "scheduled", "home_score": None, "away_score": None,
+    })
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    result = predict.predict_game(conn, WEIGHTS, game)
+
+    assert result["confidence_label"] == "Low"
+
+
+def test_confidence_rises_as_current_season_sample_grows(tmp_path):
+    conn = make_conn(tmp_path)
+    for i in range(8):
+        db.upsert_game(conn, {
+            "id": f"cur{i}", "season": 2026, "week": i + 1, "home_team_id": "A", "away_team_id": "B",
+            "kickoff_at": f"2026-09-{i + 1:02d}T00:00Z", "venue_name": "X", "is_outdoor": True,
+            "lat": 0, "lon": 0, "status": "final", "home_score": 24, "away_score": 17,
+        })
+    db.upsert_game(conn, {
+        "id": "g2", "season": 2026, "week": 9, "home_team_id": "A", "away_team_id": "B",
+        "kickoff_at": "2026-11-02T00:00Z", "venue_name": "X", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "scheduled", "home_score": None, "away_score": None,
+    })
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    result = predict.predict_game(conn, WEIGHTS, game)
+
+    assert result["confidence_label"] == "High"
+
+
+def test_get_latest_prediction_returns_most_recent_row(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_upcoming(conn)
+    conn.commit()
+    predict.save_prediction(
+        conn, "g2",
+        {"predicted_home_score": 20.0, "predicted_away_score": 14.0, "breakdown": {"home": {}, "away": {}}},
+        WEIGHTS,
+    )
+    predict.save_prediction(
+        conn, "g2",
+        {"predicted_home_score": 24.0, "predicted_away_score": 17.0, "breakdown": {"home": {}, "away": {}}},
+        WEIGHTS,
+    )
+
+    result = predict.get_latest_prediction(conn, "g2")
+
+    assert result["predicted_home_score"] == 24.0
+    assert result["predicted_away_score"] == 17.0
+
+
+def test_get_latest_prediction_returns_none_when_no_prediction_saved(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_upcoming(conn)
+    conn.commit()
+
+    assert predict.get_latest_prediction(conn, "g2") is None
+
+
+def test_upset_alert_flags_when_model_favorite_differs_from_elo_favorite(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_upcoming(conn)
+    # Team A has a big Elo edge, so Elo alone favors A. But seed enough lopsided recent
+    # scoring for B (and none for A) that the full model flips to favor B instead.
+    db.upsert_team_rating(conn, "A", 1700.0, "2026-08-01T00:00:00+00:00")
+    db.upsert_team_rating(conn, "B", 1300.0, "2026-08-01T00:00:00+00:00")
+    for i in range(3):
+        seed_game(conn, f"b{i}", "B", "A", 45, 3, f"2026-07-0{i + 1}T00:00Z")
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    result = predict.predict_game(conn, {**WEIGHTS, "elo": 0.1, "recent_scoring_trend": 2.0}, game)
+
+    assert result["predicted_away_score"] > result["predicted_home_score"]
+    assert result["upset_alert"] is True
+
+
+def test_upset_alert_false_when_model_agrees_with_elo(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_upcoming(conn)
+    db.upsert_team_rating(conn, "A", 1700.0, "2026-08-01T00:00:00+00:00")
+    db.upsert_team_rating(conn, "B", 1300.0, "2026-08-01T00:00:00+00:00")
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
+
+    result = predict.predict_game(conn, WEIGHTS, game)
+
+    assert result["upset_alert"] is False
+
+
 def test_save_prediction_persists_row(tmp_path):
     conn = make_conn(tmp_path)
     seed_upcoming(conn)

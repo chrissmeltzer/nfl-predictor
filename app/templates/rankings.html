@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}Power Rankings · Fourth Down Forecast{% endblock %}
+{% block content %}
+<section class="hero compact-hero">
+  <div>
+    <p class="eyebrow">{{ season }} season</p>
+    <h1>Power rankings.</h1>
+    <p class="hero-copy">Elo ratings computed from every synced result, regressed toward the mean between seasons. Click a column to sort.</p>
+  </div>
+</section>
+
+<section class="section-heading"><div><p class="eyebrow">This season</p><h2>Current ratings</h2></div><p>{{ rankings | length }} teams</p></section>
+
+{% if rankings %}
+<div class="table-wrap">
+  <table id="rankings-table">
+    <thead>
+      <tr>
+        <th data-sort="numeric">Rank</th>
+        <th data-sort="text">Team</th>
+        <th data-sort="text">Record</th>
+        <th data-sort="numeric">Elo rating</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rankings %}
+      <tr>
+        <td>{{ row.rank }}</td>
+        <td><a class="team-lockup" href="/teams/{{ row.team.id }}"><img src="{{ row.logo }}" alt="{{ row.team.name }} logo" class="team-logo">{{ row.team.name }}</a></td>
+        <td>{{ row.record }}</td>
+        <td>{{ row.elo_rating }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<script>
+(function () {
+  var table = document.getElementById('rankings-table');
+  if (!table) return;
+  var tbody = table.tBodies[0];
+  Array.prototype.forEach.call(table.querySelectorAll('th[data-sort]'), function (th, index) {
+    th.addEventListener('click', function () {
+      var ascending = th.dataset.dir !== 'asc';
+      Array.prototype.forEach.call(table.querySelectorAll('th[data-sort]'), function (other) {
+        delete other.dataset.dir;
+      });
+      th.dataset.dir = ascending ? 'asc' : 'desc';
+
+      var rows = Array.prototype.slice.call(tbody.rows);
+      var numeric = th.dataset.sort === 'numeric';
+      rows.sort(function (a, b) {
+        var aText = a.cells[index].innerText.trim();
+        var bText = b.cells[index].innerText.trim();
+        var comparison = numeric
+          ? parseFloat(aText) - parseFloat(bText)
+          : aText.localeCompare(bText);
+        return ascending ? comparison : -comparison;
+      });
+      rows.forEach(function (row) { tbody.appendChild(row); });
+    });
+  });
+})();
+</script>
+{% else %}
+<section class="empty-state"><h2>No teams synced yet.</h2><p>Use the sync endpoint to load teams and this page will populate automatically.</p></section>
+{% endif %}
+{% endblock %}
