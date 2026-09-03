@@ -43,14 +43,32 @@
 </section>
 
 <div class="detail-grid">
-  <section class="detail-card"><p class="eyebrow">Win probabilities</p><h2>Projected advantage</h2><div class="probability-label"><span>{{ away_team.abbreviation }}</span><strong>{{ matchup.away_probability }}%</strong></div><div class="probability-track"><i style="width: {{ matchup.away_probability }}%"></i></div><div class="probability-label"><span>{{ home_team.abbreviation }}</span><strong>{{ matchup.home_probability }}%</strong></div><div class="probability-track probability-track-violet"><i style="width: {{ matchup.home_probability }}%"></i></div></section>
-  <section class="detail-card"><p class="eyebrow">Game conditions</p><h2>{{ game.venue_name or 'Venue TBD' }}</h2>{% if weather %}<p class="condition-value">{{ weather.temp_f }}°F <span>·</span> {{ weather.wind_mph }} mph wind <span>·</span> {{ weather.precip_pct }}% precipitation</p>{% else %}<p class="muted">Weather data is not available for this matchup.</p>{% endif %}</section>
+  <section class="detail-card"><p class="eyebrow">Win probabilities</p><h2>Projected advantage</h2><div class="probability-label"><span>{{ away_team.abbreviation }}</span><strong>{{ matchup.away_probability }}%</strong></div><div class="probability-track"><i data-target="{{ matchup.away_probability }}"></i></div><div class="probability-label"><span>{{ home_team.abbreviation }}</span><strong>{{ matchup.home_probability }}%</strong></div><div class="probability-track probability-track-violet"><i data-target="{{ matchup.home_probability }}"></i></div></section>
+  <section class="detail-card detail-card-weather {{ 'weather-' + weather_severity.severity if weather_severity }}"><p class="eyebrow">Game conditions</p><h2>{{ game.venue_name or 'Venue TBD' }}</h2>{% if weather %}<p class="condition-value">{% if weather_severity %}<span class="weather-icon">{{ weather_severity.icon }}</span>{% endif %}{{ weather.temp_f }}°F <span>·</span> {{ weather.wind_mph }} mph wind <span>·</span> {{ weather.precip_pct }}% precipitation</p>{% if weather_severity %}<span class="weather-tag">{{ weather_severity.label }}</span>{% endif %}{% else %}<p class="muted">Weather data is not available for this matchup.</p>{% endif %}</section>
   <section class="detail-card"><p class="eyebrow">Head to head</p><h2>Historical context</h2>{% if head_to_head.avg_points_scored is not none %}<p class="condition-value">{{ '%.1f' | format(head_to_head.avg_points_scored) }} average points scored</p>{% else %}<p class="muted">No prior head-to-head sample is available.</p>{% endif %}</section>
 </div>
 
+{% if timeline_meetings > 0 %}
+<section class="detail-card timeline-card">
+  <p class="eyebrow">Head to head</p>
+  <h2>Scoring trend · last {{ timeline_meetings }} meeting{{ 's' if timeline_meetings != 1 else '' }}</h2>
+  <canvas id="h2h-chart" height="90" role="img" aria-label="Line chart of {{ away_team.name }} and {{ home_team.name }} points scored across their last {{ timeline_meetings }} meetings"></canvas>
+  <div class="timeline-legend"><span><i style="background: var(--violet)"></i>{{ home_team.abbreviation }}</span><span><i style="background: var(--cyan)"></i>{{ away_team.abbreviation }}</span></div>
+</section>
+{% endif %}
+
 <section class="section-heading"><div><p class="eyebrow">Availability report</p><h2>Injuries</h2></div></section>
 <div class="injury-grid">
-  <section class="detail-card"><h3>{{ away_team.name }}</h3>{% for injury in injuries_away %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong>{{ injury.status }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
-  <section class="detail-card"><h3>{{ home_team.name }}</h3>{% for injury in injuries_home %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong>{{ injury.status }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
+  <section class="detail-card"><h3>{{ away_team.name }}</h3>{% for injury in injuries_away %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong class="injury-badge {{ injury.impact.class }}">{{ injury.impact.label }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
+  <section class="detail-card"><h3>{{ home_team.name }}</h3>{% for injury in injuries_home %}<p class="injury-row"><span>{{ injury.player_name }}{% if injury.position %} · {{ injury.position }}{% endif %}</span><strong class="injury-badge {{ injury.impact.class }}">{{ injury.impact.label }}</strong></p>{% else %}<p class="muted">No current injuries listed.</p>{% endfor %}</section>
 </div>
+
+<script type="application/json" id="h2h-data">{{ timeline_chart_json | safe }}</script>
+{% endblock %}
+
+{% block scripts %}
+{% if timeline_meetings > 0 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+{% endif %}
+<script src="{{ url_for('static', path='game_detail.js') }}" defer></script>
 {% endblock %}

@@ -140,6 +140,39 @@ def head_to_head(conn: sqlite3.Connection, team_id: str, opponent_id: str, befor
     return {"avg_points_scored": sum(scored) / len(scored), "meetings": len(games)}
 
 
+def head_to_head_games(
+    conn: sqlite3.Connection, team_id: str, opponent_id: str, before: str | None = None, limit: int = 8
+) -> list[dict]:
+    """Chronological list of past meetings between two teams, most recent `limit` kept."""
+    query = """
+        SELECT * FROM games
+        WHERE status = 'final' AND (
+            (home_team_id = ? AND away_team_id = ?) OR
+            (home_team_id = ? AND away_team_id = ?)
+        )
+    """
+    params = [team_id, opponent_id, opponent_id, team_id]
+    if before is not None:
+        query += " AND kickoff_at < ?"
+        params.append(before)
+    query += " ORDER BY kickoff_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    games = conn.execute(query, params).fetchall()
+
+    meetings = []
+    for g in reversed(games):
+        team_score = g["home_score"] if g["home_team_id"] == team_id else g["away_score"]
+        opponent_score = g["away_score"] if g["home_team_id"] == team_id else g["home_score"]
+        meetings.append({
+            "kickoff_at": g["kickoff_at"],
+            "season": g["season"],
+            "week": g["week"],
+            "team_score": team_score,
+            "opponent_score": opponent_score,
+        })
+    return meetings
+
+
 def rest_days(conn: sqlite3.Connection, team_id: str, before: str) -> int | None:
     row = conn.execute(
         """

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -100,6 +101,56 @@ def _format_kickoff(value: str | None) -> str:
 def _win_probability(team_score: float, opponent_score: float) -> int:
     margin = team_score - opponent_score
     return max(5, min(95, round(50 + margin * 4)))
+
+
+def _weather_severity(weather_row) -> dict | None:
+    if weather_row is None:
+        return None
+    wind = weather_row["wind_mph"] or 0
+    precip = weather_row["precip_pct"] or 0
+    temp = weather_row["temp_f"]
+
+    if precip >= 60:
+        icon = "🌧️"
+    elif wind >= 20:
+        icon = "💨"
+    elif temp is not None and temp <= 32:
+        icon = "❄️"
+    elif temp is not None and temp >= 90:
+        icon = "🔥"
+    else:
+        icon = "☀️"
+
+    is_extreme = precip >= 60 or wind >= 20 or (temp is not None and (temp <= 20 or temp >= 95))
+    is_notable = precip >= 30 or wind >= 12 or (temp is not None and (temp <= 35 or temp >= 88))
+    if is_extreme:
+        severity, label = "severe", "Severe conditions"
+    elif is_notable:
+        severity, label = "notable", "Challenging conditions"
+    else:
+        severity, label = "calm", "Favorable conditions"
+
+    return {"icon": icon, "severity": severity, "label": label}
+
+
+_INJURY_IMPACT = {
+    "out": ("impact-out", "Out"),
+    "ir": ("impact-out", "Out"),
+    "injured reserve": ("impact-out", "Out"),
+    "reserve/injured": ("impact-out", "Out"),
+    "pup": ("impact-out", "Out"),
+    "doubtful": ("impact-doubtful", "Doubtful"),
+    "questionable": ("impact-questionable", "Questionable"),
+}
+
+
+def _injury_impact(status: str | None) -> dict:
+    css_class, label = _INJURY_IMPACT.get((status or "").strip().lower(), ("impact-minor", status or "Active"))
+    return {"class": css_class, "label": label}
+
+
+def _injury_view(rows) -> list[dict]:
+    return [{**dict(row), "impact": _injury_impact(row["status"])} for row in rows]
 
 
 def _factor_sentence(factor: str, team: str, opponent: str, value: float) -> str | None:
@@ -321,7 +372,19 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
     injuries_home = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["home_team_id"],)).fetchall()
     injuries_away = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["away_team_id"],)).fetchall()
     head_to_head = stats.head_to_head(conn, game["home_team_id"], game["away_team_id"])
+    head_to_head_games = stats.head_to_head_games(conn, game["home_team_id"], game["away_team_id"])
     matchup = _game_view(conn, game, {home_team["id"]: home_team, away_team["id"]: away_team}, result)
+
+    timeline_chart = {
+        "labels": [
+            _format_kickoff(g["kickoff_at"]).split(" · ")[0] if g["kickoff_at"] else f"{g['season']} Wk {g['week']}"
+            for g in head_to_head_games
+        ],
+        "home": [g["team_score"] for g in head_to_head_games],
+        "away": [g["opponent_score"] for g in head_to_head_games],
+        "home_abbr": home_team["abbreviation"],
+        "away_abbr": away_team["abbreviation"],
+    }
 
     return templates.TemplateResponse(
         request,
@@ -329,7 +392,10 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
         _template_context(
             request, game=game, result=result, matchup=matchup, home_team=home_team, away_team=away_team,
             home_logo=_logo_url(home_team), away_logo=_logo_url(away_team), weather=weather_row,
-            injuries_home=injuries_home, injuries_away=injuries_away, head_to_head=head_to_head,
+            weather_severity=_weather_severity(weather_row),
+            injuries_home=_injury_view(injuries_home), injuries_away=_injury_view(injuries_away),
+            head_to_head=head_to_head, timeline_chart_json=json.dumps(timeline_chart).replace("<", "\\u003c"),
+            timeline_meetings=len(head_to_head_games),
             teams=[home_team, away_team],
         ),
     )
