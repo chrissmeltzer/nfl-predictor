@@ -1,10 +1,9 @@
 """Coordinate-descent calibration of prediction weights against finalized games.
 
-This is a lightweight backtest: for each tunable weight, it tries a small set of
-candidate multipliers against the current best weights and keeps whichever combination
-lowers the mean absolute margin error the most, holding all other weights fixed. It is a
-stand-in for a full grid search or regression fit, chosen because this project has no
-numpy/scipy dependency to lean on for a more rigorous optimizer.
+Margin-affecting weights (recent scoring, home/away, turnovers/EPA-derived team form,
+strength of schedule, Elo, etc.) are tuned against mean absolute margin error. The total-
+points anchor and pace weights are tuned separately against mean absolute total error,
+since they redistribute the predicted total without changing the predicted margin.
 
 Usage:
     python scripts/calibrate_weights.py
@@ -23,10 +22,11 @@ from app import db, predict
 from app.config import DB_PATH, WEIGHTS_PATH
 
 CANDIDATE_MULTIPLIERS = [0.0, 0.5, 1.0, 1.5, 2.0]
-TUNABLE_KEYS = [
+MARGIN_TUNABLE_KEYS = [
     "recent_scoring_trend", "home_away_split", "head_to_head", "weather",
-    "rest_days", "injuries", "turnovers", "epa", "strength_of_schedule", "elo",
+    "rest_days", "injuries", "team_form", "strength_of_schedule", "elo",
 ]
+TOTAL_TUNABLE_KEYS = ["total_points_anchor", "pace"]
 
 
 def _finalized_games(conn):
@@ -43,23 +43,39 @@ def _mean_absolute_margin_error(conn, weights: dict, games) -> float | None:
     return sum(errors) / len(errors) if errors else None
 
 
-def calibrate(conn, base_weights: dict, games) -> dict:
+def _mean_absolute_total_error(conn, weights: dict, games) -> float | None:
+    errors = []
+    for game in games:
+        result = predict.predict_game(conn, weights, game)
+        predicted_total = result["predicted_home_score"] + result["predicted_away_score"]
+        actual_total = game["home_score"] + game["away_score"]
+        errors.append(abs(predicted_total - actual_total))
+    return sum(errors) / len(errors) if errors else None
+
+
+def _coordinate_descent(conn, base_weights: dict, games, keys: list[str], error_fn) -> dict:
     best_weights = dict(base_weights)
-    best_error = _mean_absolute_margin_error(conn, best_weights, games)
+    best_error = error_fn(conn, best_weights, games)
     if best_error is None:
         return best_weights
 
-    for key in TUNABLE_KEYS:
+    for key in keys:
         base_value = best_weights.get(key, 1.0)
         for multiplier in CANDIDATE_MULTIPLIERS:
             candidate = dict(best_weights)
             candidate[key] = round(base_value * multiplier, 3) if base_value else multiplier
-            error = _mean_absolute_margin_error(conn, candidate, games)
+            error = error_fn(conn, candidate, games)
             if error is not None and error < best_error:
                 best_error = error
                 best_weights = candidate
 
     return best_weights
+
+
+def calibrate(conn, base_weights: dict, games) -> dict:
+    weights = _coordinate_descent(conn, base_weights, games, MARGIN_TUNABLE_KEYS, _mean_absolute_margin_error)
+    weights = _coordinate_descent(conn, weights, games, TOTAL_TUNABLE_KEYS, _mean_absolute_total_error)
+    return weights
 
 
 def main() -> None:
@@ -72,15 +88,19 @@ def main() -> None:
         print("No finalized games in the database yet; run a sync first.")
         return
 
-    baseline_error = _mean_absolute_margin_error(conn, base_weights, games)
+    baseline_margin_error = _mean_absolute_margin_error(conn, base_weights, games)
+    baseline_total_error = _mean_absolute_total_error(conn, base_weights, games)
     tuned_weights = calibrate(conn, base_weights, games)
-    tuned_error = _mean_absolute_margin_error(conn, tuned_weights, games)
+    tuned_margin_error = _mean_absolute_margin_error(conn, tuned_weights, games)
+    tuned_total_error = _mean_absolute_total_error(conn, tuned_weights, games)
 
     print(f"Finalized games evaluated: {len(games)}")
-    print(f"Baseline mean absolute margin error: {baseline_error:.2f}")
-    print(f"Tuned mean absolute margin error:    {tuned_error:.2f}")
+    print(f"Baseline mean absolute margin error: {baseline_margin_error:.2f}")
+    print(f"Tuned mean absolute margin error:    {tuned_margin_error:.2f}")
+    print(f"Baseline mean absolute total error:   {baseline_total_error:.2f}")
+    print(f"Tuned mean absolute total error:      {tuned_total_error:.2f}")
     print("\nSuggested weights (not written to weights.yaml automatically):")
-    for key in TUNABLE_KEYS:
+    for key in MARGIN_TUNABLE_KEYS + TOTAL_TUNABLE_KEYS:
         print(f"  {key}: {tuned_weights.get(key)}")
 
     suggested_path = WEIGHTS_PATH.parent / "weights.suggested.yaml"

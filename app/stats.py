@@ -18,12 +18,6 @@ def _team_games(conn: sqlite3.Connection, team_id: str, limit: int | None = None
 
 
 def _dampen_margin(scored: float, allowed: float, cap: float) -> tuple[float, float]:
-    """Compress a game's scoring margin beyond ``cap`` points while preserving total points.
-
-    Mirrors the spirit of FiveThirtyEight's Elo margin-of-victory dampening: a 45-point blowout
-    shouldn't move a team's recent-form trend as much as a nail-biter win does. Total points
-    (scored + allowed) is left unchanged; only the differential is capped.
-    """
     mean = (scored + allowed) / 2
     diff = scored - allowed
     if diff > cap:
@@ -200,3 +194,11 @@ def strength_of_schedule(conn: sqlite3.Connection, team_id: str, window: int) ->
 def get_team_rating(conn: sqlite3.Connection, team_id: str, default: float = 1500.0) -> float:
     row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = ?", (team_id,)).fetchone()
     return row["elo_rating"] if row else default
+
+
+def pace_form(conn: sqlite3.Connection, team_id: str, window: int) -> float | None:
+    rows = _team_game_stats(conn, team_id, window)
+    values = [row["plays"] for row in rows if row["plays"] is not None]
+    if not values:
+        return None
+    return sum(values) / len(values)

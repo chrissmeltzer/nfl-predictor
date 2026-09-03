@@ -12,6 +12,8 @@ from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE
 
 INJURY_STATUSES_COUNTED = {"Out", "Doubtful", "Injured Reserve"}
 LEAGUE_AVERAGE_SCORE = 21.0
+LEAGUE_AVERAGE_TOTAL = 44.0
+LEAGUE_AVERAGE_PLAYS = 64.0
 ADVANCED_STATS_WINDOW = 8
 
 
@@ -30,12 +32,6 @@ def _average(a: float | None, b: float | None) -> float:
 
 
 def _scaled_baseline(raw_baseline: float, weight: float) -> float:
-    """Blend the recent-scoring-derived baseline with the league average.
-
-    weight=1.0 (the default) uses the raw baseline unchanged; weight=0
-    ignores recent form entirely and predicts the league average; values
-    in between (or above 1) scale how strongly recent form is trusted.
-    """
     return LEAGUE_AVERAGE_SCORE + weight * (raw_baseline - LEAGUE_AVERAGE_SCORE)
 
 
@@ -81,21 +77,29 @@ def _injuries_adjustment(conn, team_id: str, weight: float) -> float:
     return weight * _clamp(total, -10, 0)
 
 
-def _turnover_adjustment(conn, team_id: str, weight: float) -> float:
+def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
+    """Combined turnover-margin and EPA signal.
+
+    Turnovers and EPA both measure the same underlying team quality (a team with poor EPA
+    almost always also has a worse turnover margin), so they are averaged here rather than
+    summed independently to avoid double-counting the same information twice.
+    """
     committed = stats.turnover_form(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_committed"]
     forced = stats.turnovers_forced(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_forced"]
-    if committed is None or forced is None:
-        return 0.0
-    margin = forced - committed
-    return weight * _clamp(margin * 4, -6, 6)
+    turnover_component = (
+        _clamp((forced - committed) * 4, -6, 6) if committed is not None and forced is not None else None
+    )
 
-
-def _epa_adjustment(conn, team_id: str, weight: float) -> float:
     form = stats.epa_form(conn, team_id, ADVANCED_STATS_WINDOW)
-    if form["epa_offense_avg"] is None or form["epa_allowed_avg"] is None:
+    epa_component = (
+        _clamp((form["epa_offense_avg"] - form["epa_allowed_avg"]) * 20, -8, 8)
+        if form["epa_offense_avg"] is not None and form["epa_allowed_avg"] is not None else None
+    )
+
+    components = [c for c in (turnover_component, epa_component) if c is not None]
+    if not components:
         return 0.0
-    net_epa = form["epa_offense_avg"] - form["epa_allowed_avg"]
-    return weight * _clamp(net_epa * 20, -8, 8)
+    return weight * (sum(components) / len(components))
 
 
 def _strength_of_schedule_adjustment(conn, team_id: str, baseline_delta: float, weight: float) -> float:
@@ -111,9 +115,44 @@ def _elo_adjustment(conn, team_id: str, opponent_id: str, is_home: bool, weight:
     opponent_rating = stats.get_team_rating(conn, opponent_id)
     home_field = elo.HOME_FIELD_ADVANTAGE if is_home else -elo.HOME_FIELD_ADVANTAGE
     rating_diff = (team_rating - opponent_rating) + home_field
-    # ~25 Elo rating points roughly corresponds to 1 point of scoring margin, consistent
-    # with FiveThirtyEight's published Elo-to-point-spread conversions.
     return weight * _clamp(rating_diff / 25.0, -7, 7)
+
+
+def _weather_total_shift(weather_row: sqlite3.Row | None) -> float:
+    if weather_row is None:
+        return 0.0
+    wind_penalty = _clamp((weather_row["wind_mph"] - 15) / 5, 0, 3)
+    precip_penalty = _clamp(weather_row["precip_pct"] / 25, 0, 2)
+    return -(wind_penalty + precip_penalty) * 2
+
+
+def _pace_target_shift(conn, home_id: str, away_id: str, weight: float) -> float:
+    home_pace = stats.pace_form(conn, home_id, ADVANCED_STATS_WINDOW)
+    away_pace = stats.pace_form(conn, away_id, ADVANCED_STATS_WINDOW)
+    if home_pace is None or away_pace is None:
+        return 0.0
+    combined_avg_plays = (home_pace + away_pace) / 2
+    return weight * _clamp((combined_avg_plays - LEAGUE_AVERAGE_PLAYS) * 0.8, -6, 6)
+
+
+def _apply_total_anchor(
+    conn, home_id: str, away_id: str, home_final: float, away_final: float,
+    weather_row: sqlite3.Row | None, weights: dict,
+) -> tuple[float, float, float]:
+    anchor_weight = weights.get("total_points_anchor", 0.5)
+    pace_weight = weights.get("pace", 0.3)
+
+    predicted_total = home_final + away_final
+    predicted_margin = home_final - away_final
+
+    target_total = LEAGUE_AVERAGE_TOTAL
+    target_total += _weather_total_shift(weather_row)
+    target_total += _pace_target_shift(conn, home_id, away_id, pace_weight)
+
+    blended_total = predicted_total + anchor_weight * (target_total - predicted_total)
+    new_home = (blended_total + predicted_margin) / 2
+    new_away = (blended_total - predicted_margin) / 2
+    return new_home, new_away, blended_total - predicted_total
 
 
 def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> dict:
@@ -153,18 +192,22 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
                 if game["kickoff_at"] else 0.0
             ),
             "injuries": _injuries_adjustment(conn, team_id, weights.get("injuries", 1.0)),
-            "turnovers": _turnover_adjustment(conn, team_id, weights.get("turnovers", 1.0)),
-            "epa": _epa_adjustment(conn, team_id, weights.get("epa", 1.0)),
+            "team_form": _team_form_adjustment(conn, team_id, weights.get("team_form", 1.0)),
             "strength_of_schedule": _strength_of_schedule_adjustment(
                 conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5)
             ),
-            "elo": _elo_adjustment(conn, team_id, opponent_id, is_home, weights.get("elo", 0.5)),
+            "elo": _elo_adjustment(conn, team_id, opponent_id, is_home, weights.get("elo", 0.35)),
         }
         breakdown[side] = {"baseline": baseline, **adjustments}
         return baseline + sum(adjustments.values())
 
     home_final = apply("home", home_id, home_baseline, True, home_split["overall_avg"])
     away_final = apply("away", away_id, away_baseline, False, away_split["overall_avg"])
+
+    home_final, away_final, anchor_delta = _apply_total_anchor(
+        conn, home_id, away_id, home_final, away_final, weather_row, weights
+    )
+    breakdown["total_anchor_delta"] = anchor_delta
 
     return {
         "predicted_home_score": round(max(home_final, 0), 1),

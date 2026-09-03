@@ -16,11 +16,11 @@ TEAM_STATS_CSV_URL = "https://github.com/nflverse/nflverse-data/releases/downloa
 _ROOF_OUTDOOR_VALUES = {"outdoors", "open"}
 _ROOF_INDOOR_VALUES = {"dome", "closed"}
 
-# Offensive giveaways: interceptions thrown plus fumbles lost across rush/pass/receiving plays.
-# Column names follow the documented nflverse load_team_stats() schema; verify against the live
-# CSV header on first sync since this could not be confirmed against a live network response.
 TURNOVER_COLUMNS = ["interceptions", "rushing_fumbles_lost", "sack_fumbles_lost", "receiving_fumbles_lost"]
 EPA_COLUMNS = ["passing_epa", "rushing_epa"]
+# Rough offensive-plays proxy (dropbacks + rush attempts); column names unverified against a
+# live CSV header, same caveat as TURNOVER_COLUMNS/EPA_COLUMNS above.
+PLAY_COLUMNS = ["attempts", "carries"]
 
 
 def parse_games_csv(csv_text: str, min_season: int) -> list[dict]:
@@ -82,12 +82,6 @@ def _sum_columns(row: dict, columns: list[str]) -> float:
 
 
 def parse_team_stats_csv(csv_text: str, min_season: int) -> list[dict]:
-    """Parse nflverse's weekly team-stats release into per-team-per-week turnover and EPA rows.
-
-    Rows with a season below ``min_season`` or outside the regular season are skipped. Turnover
-    and EPA columns are summed defensively (missing columns contribute 0) since the exact column
-    set can shift between nflverse releases.
-    """
     reader = csv.DictReader(io.StringIO(csv_text))
     stats = []
     for row in reader:
@@ -105,12 +99,14 @@ def parse_team_stats_csv(csv_text: str, min_season: int) -> list[dict]:
         if abbr not in STADIUMS:
             continue
 
+        plays_value = _sum_columns(row, PLAY_COLUMNS)
         stats.append({
             "team_abbreviation": abbr,
             "season": season,
             "week": week,
             "turnovers": int(round(_sum_columns(row, TURNOVER_COLUMNS))),
             "epa_offense": _sum_columns(row, EPA_COLUMNS),
+            "plays": plays_value if plays_value > 0 else None,
         })
     return stats
 
