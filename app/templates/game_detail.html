@@ -7,6 +7,23 @@
   <div class="game-team"><img src="{{ home_logo }}" alt="{{ home_team.name }} logo" class="team-logo team-logo-xl"><a href="/teams/{{ home_team.id }}">{{ home_team.name }}</a><span>Home</span></div>
 </section>
 
+<section class="analysis-box">
+  <div class="analysis-box-header">
+    <p class="eyebrow">Game analysis</p>
+    <h2>What's swaying this projection</h2>
+    <span class="confidence-badge confidence-{{ matchup.confidence_label | lower }}">{{ matchup.confidence_label }} confidence</span>
+  </div>
+  {% if matchup.analysis %}
+  <ul class="analysis-list analysis-list-large">
+    {% for note in matchup.analysis %}
+    <li>{{ note }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No standout factors are currently swaying this projection beyond typical season form.</p>
+  {% endif %}
+</section>
+
 <div class="detail-grid">
   <section class="detail-card"><p class="eyebrow">Win probabilities</p><h2>Projected advantage</h2><div class="probability-label"><span>{{ away_team.abbreviation }}</span><strong>{{ matchup.away_probability }}%</strong></div><div class="probability-track"><i style="width: {{ matchup.away_probability }}%"></i></div><div class="probability-label"><span>{{ home_team.abbreviation }}</span><strong>{{ matchup.home_probability }}%</strong></div><div class="probability-track probability-track-violet"><i style="width: {{ matchup.home_probability }}%"></i></div></section>
   <section class="detail-card"><p class="eyebrow">Game conditions</p><h2>{{ game.venue_name or 'Venue TBD' }}</h2>{% if weather %}<p class="condition-value">{{ weather.temp_f }}°F <span>·</span> {{ weather.wind_mph }} mph wind <span>·</span> {{ weather.precip_pct }}% precipitation</p>{% else %}<p class="muted">Weather data is not available for this matchup.</p>{% endif %}</section>

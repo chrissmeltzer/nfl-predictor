@@ -17,6 +17,51 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
+# Plain-language sentence templates for the game-analysis box. Each factor maps to a
+# (positive, negative) pair of templates; either side may be None to skip narrating that
+# direction. These deliberately describe *what kind* of factor is in play (pass defense,
+# travel, rest, etc.) without revealing exact point values or internal weights.
+_FACTOR_TEMPLATES: dict[str, tuple[str | None, str | None]] = {
+    "team_form": (
+        "{team}'s passing efficiency and ball security have been a strength, which could be a deciding factor against {opponent}.",
+        "{opponent}'s pass defense could be a tough matchup for {team}'s offense this week.",
+    ),
+    "elo": (
+        "{team} enters as the stronger team by season-long form.",
+        "{opponent} carries a clear power-rating edge into this matchup.",
+    ),
+    "weather": (
+        None,
+        "Game conditions could suppress scoring, especially for {team}'s passing attack.",
+    ),
+    "travel": (
+        None,
+        "{team}'s travel distance this week adds a fatigue factor worth watching.",
+    ),
+    "injuries": (
+        None,
+        "Injuries to key contributors are a concern for {team}.",
+    ),
+    "home_away_split": (
+        "{team} has performed well in this game script this season.",
+        "{team} has struggled in this game script (home/away) this season.",
+    ),
+    "head_to_head": (
+        "{team} has had {opponent}'s number in recent head-to-head meetings.",
+        "{opponent} has typically had the edge in recent meetings between these two.",
+    ),
+    "rest_days": (
+        "{team} enters with a rest advantage this week.",
+        "A short week could hamper {team}.",
+    ),
+    "recency_trend": (
+        "{team} is trending upward compared to their season average.",
+        "{team}'s recent form has dipped below their season norm.",
+    ),
+}
+_ANALYSIS_MIN_MAGNITUDE = 0.4
+_ANALYSIS_MAX_ITEMS = 3
+
 
 def get_db():
     conn = db.get_connection(DB_PATH)
@@ -53,12 +98,56 @@ def _win_probability(team_score: float, opponent_score: float) -> int:
     return max(5, min(95, round(50 + margin * 4)))
 
 
+def _factor_sentence(factor: str, team: str, opponent: str, value: float) -> str | None:
+    templates_pair = _FACTOR_TEMPLATES.get(factor)
+    if not templates_pair:
+        return None
+    positive_template, negative_template = templates_pair
+    template = positive_template if value >= 0 else negative_template
+    if template is None:
+        return None
+    return template.format(team=team, opponent=opponent)
+
+
+def _build_analysis(breakdown: dict, home_name: str, away_name: str) -> list[str]:
+    """Translate the model's internal per-factor adjustments into a short list of
+    plain-language notes about what's swaying this game's projection, without exposing
+    exact point values or the underlying weight configuration.
+    """
+    entries: list[tuple[str, float, str, str]] = []
+    for factor, value in breakdown.get("home", {}).items():
+        if factor == "baseline" or not isinstance(value, (int, float)):
+            continue
+        entries.append((factor, value, home_name, away_name))
+    for factor, value in breakdown.get("away", {}).items():
+        if factor == "baseline" or not isinstance(value, (int, float)):
+            continue
+        entries.append((factor, value, away_name, home_name))
+
+    entries.sort(key=lambda entry: abs(entry[1]), reverse=True)
+
+    sentences: list[str] = []
+    seen: set[str] = set()
+    for factor, value, team, opponent in entries:
+        if abs(value) < _ANALYSIS_MIN_MAGNITUDE:
+            continue
+        sentence = _factor_sentence(factor, team, opponent, value)
+        if not sentence or sentence in seen:
+            continue
+        sentences.append(sentence)
+        seen.add(sentence)
+        if len(sentences) >= _ANALYSIS_MAX_ITEMS:
+            break
+    return sentences
+
+
 def _game_view(game, teams, result: dict, selected_team_id: str | None = None) -> dict:
     home = teams[game["home_team_id"]]
     away = teams[game["away_team_id"]]
     home_score = result["predicted_home_score"]
     away_score = result["predicted_away_score"]
     winner = home if home_score >= away_score else away
+    breakdown = result.get("breakdown", {})
     view = {
         "game": game,
         "home": home,
@@ -71,6 +160,9 @@ def _game_view(game, teams, result: dict, selected_team_id: str | None = None) -
         "home_probability": _win_probability(home_score, away_score),
         "away_probability": _win_probability(away_score, home_score),
         "kickoff": _format_kickoff(game["kickoff_at"]),
+        "confidence_score": result.get("confidence_score"),
+        "confidence_label": result.get("confidence_label", "Moderate"),
+        "analysis": _build_analysis(breakdown, home["name"], away["name"]),
     }
     if selected_team_id:
         is_home = game["home_team_id"] == selected_team_id
@@ -117,6 +209,7 @@ def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
         (season, week),
     ).fetchall()
     teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
+
     weights = predict.load_weights(WEIGHTS_PATH)
     matchups = [_game_view(game, teams, predict.predict_game(conn, weights, game)) for game in games]
 
