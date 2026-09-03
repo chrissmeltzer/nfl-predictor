@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS team_ratings (
 );
 """
 
+# Columns that may be missing from a team_game_stats table created by an older version of
+# this schema. init_db() adds any of these that don't already exist, so existing local
+# databases don't need to be deleted every time a new column is introduced.
+_TEAM_GAME_STATS_MIGRATIONS = {
+    "epa_offense": "REAL",
+    "epa_passing": "REAL",
+    "epa_rushing": "REAL",
+    "plays": "REAL",
+}
+
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
@@ -90,8 +100,16 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_columns(conn: sqlite3.Connection, table: str, column_defs: dict[str, str]) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for column, ddl_type in column_defs.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    _ensure_columns(conn, "team_game_stats", _TEAM_GAME_STATS_MIGRATIONS)
     conn.commit()
 
 
