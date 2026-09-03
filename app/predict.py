@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,13 +9,14 @@ from pathlib import Path
 import yaml
 
 from app import elo, stats
-from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE
+from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE, STADIUMS
 
 INJURY_STATUSES_COUNTED = {"Out", "Doubtful", "Injured Reserve"}
 LEAGUE_AVERAGE_SCORE = 21.0
 LEAGUE_AVERAGE_TOTAL = 44.0
 LEAGUE_AVERAGE_PLAYS = 64.0
 ADVANCED_STATS_WINDOW = 8
+TRAVEL_POINTS_PER_1000KM = 1.0
 
 
 def load_weights(path: Path) -> dict:
@@ -77,12 +79,22 @@ def _injuries_adjustment(conn, team_id: str, weight: float) -> float:
     return weight * _clamp(total, -10, 0)
 
 
-def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
-    """Combined turnover-margin and EPA signal.
+def _recency_trend_adjustment(conn, team_id: str, window: int, weight: float) -> float:
+    flat = stats.recent_scoring_stats(conn, team_id, window)
+    weighted = stats.recency_weighted_scoring(conn, team_id, window)
+    if flat["avg_points_scored"] is None or weighted is None:
+        return 0.0
+    delta = weighted["avg_points_scored"] - flat["avg_points_scored"]
+    return weight * _clamp(delta, -4, 4)
 
-    Turnovers and EPA both measure the same underlying team quality (a team with poor EPA
-    almost always also has a worse turnover margin), so they are averaged here rather than
-    summed independently to avoid double-counting the same information twice.
+
+def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
+    """Combined turnover-margin and split passing/rushing EPA signal.
+
+    Passing efficiency explains more modern NFL scoring variance than rushing efficiency,
+    so the two EPA components are weighted 0.65/0.35 rather than treated equally. Turnovers
+    and EPA are averaged together (not summed) since both largely measure the same
+    underlying team quality.
     """
     committed = stats.turnover_form(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_committed"]
     forced = stats.turnovers_forced(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_forced"]
@@ -90,11 +102,27 @@ def _team_form_adjustment(conn, team_id: str, weight: float) -> float:
         _clamp((forced - committed) * 4, -6, 6) if committed is not None and forced is not None else None
     )
 
-    form = stats.epa_form(conn, team_id, ADVANCED_STATS_WINDOW)
-    epa_component = (
-        _clamp((form["epa_offense_avg"] - form["epa_allowed_avg"]) * 20, -8, 8)
-        if form["epa_offense_avg"] is not None and form["epa_allowed_avg"] is not None else None
+    split = stats.epa_split_form(conn, team_id, ADVANCED_STATS_WINDOW)
+    pass_net = (
+        split["passing_epa_avg"] - split["passing_epa_allowed_avg"]
+        if split["passing_epa_avg"] is not None and split["passing_epa_allowed_avg"] is not None else None
     )
+    rush_net = (
+        split["rushing_epa_avg"] - split["rushing_epa_allowed_avg"]
+        if split["rushing_epa_avg"] is not None and split["rushing_epa_allowed_avg"] is not None else None
+    )
+
+    epa_parts, epa_weights = [], []
+    if pass_net is not None:
+        epa_parts.append(pass_net)
+        epa_weights.append(0.65)
+    if rush_net is not None:
+        epa_parts.append(rush_net)
+        epa_weights.append(0.35)
+    epa_component = None
+    if epa_parts:
+        composite_net_epa = sum(p * w for p, w in zip(epa_parts, epa_weights)) / sum(epa_weights)
+        epa_component = _clamp(composite_net_epa * 20, -8, 8)
 
     components = [c for c in (turnover_component, epa_component) if c is not None]
     if not components:
@@ -116,6 +144,28 @@ def _elo_adjustment(conn, team_id: str, opponent_id: str, is_home: bool, weight:
     home_field = elo.HOME_FIELD_ADVANTAGE if is_home else -elo.HOME_FIELD_ADVANTAGE
     rating_diff = (team_rating - opponent_rating) + home_field
     return weight * _clamp(rating_diff / 25.0, -7, 7)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(a))
+
+
+def _travel_adjustment(game: sqlite3.Row, away_abbr: str | None, is_home: bool, weight: float) -> float:
+    if is_home or away_abbr is None:
+        return 0.0
+    if game["lat"] is None or game["lon"] is None:
+        return 0.0
+    away_stadium = STADIUMS.get(away_abbr)
+    if not away_stadium:
+        return 0.0
+    distance_km = _haversine_km(game["lat"], game["lon"], away_stadium["lat"], away_stadium["lon"])
+    penalty = -(distance_km / 1000.0) * TRAVEL_POINTS_PER_1000KM
+    return weight * _clamp(penalty, -4, 0)
 
 
 def _weather_total_shift(weather_row: sqlite3.Row | None) -> float:
@@ -155,9 +205,25 @@ def _apply_total_anchor(
     return new_home, new_away, blended_total - predicted_total
 
 
+def _prediction_confidence(home_games_counted: int, away_games_counted: int) -> tuple[int, str]:
+    """Rough confidence score based on how much real recent-game data underlies the
+    prediction. Not a statistically calibrated probability -- just a UI-facing signal that
+    early-season or sparse-data predictions should be trusted less.
+    """
+    combined = min(home_games_counted, away_games_counted)
+    score = 30 + min(combined, 8) / 8 * 60
+    score = round(score)
+    label = "Low" if score < 50 else ("Moderate" if score < 75 else "High")
+    return score, label
+
+
 def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> dict:
     window = weights.get("recent_games_window", 8)
     home_id, away_id = game["home_team_id"], game["away_team_id"]
+
+    home_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = ?", (home_id,)).fetchone()
+    away_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = ?", (away_id,)).fetchone()
+    away_abbr = away_abbr_row["abbreviation"] if away_abbr_row else None
 
     home_recent = stats.recent_scoring_stats(conn, home_id, window)
     away_recent = stats.recent_scoring_stats(conn, away_id, window)
@@ -197,6 +263,8 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
                 conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5)
             ),
             "elo": _elo_adjustment(conn, team_id, opponent_id, is_home, weights.get("elo", 0.35)),
+            "recency_trend": _recency_trend_adjustment(conn, team_id, window, weights.get("recency_trend", 0.5)),
+            "travel": _travel_adjustment(game, away_abbr, is_home, weights.get("travel", 0.5)),
         }
         breakdown[side] = {"baseline": baseline, **adjustments}
         return baseline + sum(adjustments.values())
@@ -209,9 +277,15 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     )
     breakdown["total_anchor_delta"] = anchor_delta
 
+    confidence_score, confidence_label = _prediction_confidence(
+        home_recent["games_counted"], away_recent["games_counted"]
+    )
+
     return {
         "predicted_home_score": round(max(home_final, 0), 1),
         "predicted_away_score": round(max(away_final, 0), 1),
+        "confidence_score": confidence_score,
+        "confidence_label": confidence_label,
         "breakdown": breakdown,
     }
 

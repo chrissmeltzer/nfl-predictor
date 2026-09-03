@@ -1,9 +1,9 @@
 """Coordinate-descent calibration of prediction weights against finalized games.
 
-Margin-affecting weights (recent scoring, home/away, turnovers/EPA-derived team form,
-strength of schedule, Elo, etc.) are tuned against mean absolute margin error. The total-
-points anchor and pace weights are tuned separately against mean absolute total error,
-since they redistribute the predicted total without changing the predicted margin.
+Margin-affecting weights (recent scoring, home/away, team form, strength of schedule, Elo,
+recency trend, travel, etc.) are tuned against mean absolute margin error. The total-points
+anchor and pace weights are tuned separately against mean absolute total error, since they
+redistribute the predicted total without changing the predicted margin.
 
 Usage:
     python scripts/calibrate_weights.py
@@ -25,6 +25,7 @@ CANDIDATE_MULTIPLIERS = [0.0, 0.5, 1.0, 1.5, 2.0]
 MARGIN_TUNABLE_KEYS = [
     "recent_scoring_trend", "home_away_split", "head_to_head", "weather",
     "rest_days", "injuries", "team_form", "strength_of_schedule", "elo",
+    "recency_trend", "travel",
 ]
 TOTAL_TUNABLE_KEYS = ["total_points_anchor", "pace"]
 

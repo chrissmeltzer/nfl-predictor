@@ -4,6 +4,9 @@ import sqlite3
 from datetime import datetime
 
 MOV_DAMPENING_CAP = 21.0
+# Heuristic exponential decay per game back in time (game 0 = most recent, weight 1.0;
+# game 1 gets 0.85, game 2 gets 0.72, etc.), pending calibration against real outcomes.
+RECENCY_DECAY = 0.85
 
 
 def _team_games(conn: sqlite3.Connection, team_id: str, limit: int | None = None) -> list[sqlite3.Row]:
@@ -47,6 +50,30 @@ def recent_scoring_stats(conn: sqlite3.Connection, team_id: str, window: int) ->
         "avg_points_allowed": sum(allowed) / len(allowed),
         "games_counted": len(games),
     }
+
+
+def recency_weighted_scoring(conn: sqlite3.Connection, team_id: str, window: int) -> dict | None:
+    """Exponentially recency-weighted scoring average, kept separate from
+    recent_scoring_stats() so the flat baseline calculation is unaffected; used only to
+    detect whether a team is trending above or below its own window average.
+    """
+    games = _team_games(conn, team_id, limit=window)
+    if not games:
+        return None
+
+    weighted_scored = 0.0
+    weight_sum = 0.0
+    for i, g in enumerate(games):
+        if g["home_team_id"] == team_id:
+            game_scored, game_allowed = g["home_score"], g["away_score"]
+        else:
+            game_scored, game_allowed = g["away_score"], g["home_score"]
+        damped_scored, _ = _dampen_margin(game_scored, game_allowed, MOV_DAMPENING_CAP)
+        weight = RECENCY_DECAY ** i
+        weighted_scored += damped_scored * weight
+        weight_sum += weight
+
+    return {"avg_points_scored": weighted_scored / weight_sum}
 
 
 def home_away_split(conn: sqlite3.Connection, team_id: str) -> dict:
@@ -164,6 +191,45 @@ def epa_form(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
     avg_allowed = sum(allowed_values) / len(allowed_values) if allowed_values else None
 
     return {"epa_offense_avg": avg_offense, "epa_allowed_avg": avg_allowed}
+
+
+def epa_split_form(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
+    """Separate passing and rushing EPA, rather than the combined epa_offense figure.
+
+    Passing efficiency explains more modern NFL scoring variance than rushing efficiency,
+    so keeping them separate lets the prediction weight them differently instead of treating
+    a pass-heavy explosive offense the same as a run-heavy grind-it-out one.
+    """
+    rows = _team_game_stats(conn, team_id, window)
+    passing_values = [row["epa_passing"] for row in rows if row["epa_passing"] is not None]
+    rushing_values = [row["epa_rushing"] for row in rows if row["epa_rushing"] is not None]
+    avg_passing = sum(passing_values) / len(passing_values) if passing_values else None
+    avg_rushing = sum(rushing_values) / len(rushing_values) if rushing_values else None
+
+    opponent_rows = conn.execute(
+        """
+        SELECT tgs.epa_passing AS opponent_passing, tgs.epa_rushing AS opponent_rushing
+        FROM games g
+        JOIN team_game_stats tgs
+          ON tgs.season = g.season AND tgs.week = g.week
+         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
+        ORDER BY g.season DESC, g.week DESC
+        LIMIT ?
+        """,
+        (team_id, team_id, team_id, window),
+    ).fetchall()
+    passing_allowed = [row["opponent_passing"] for row in opponent_rows if row["opponent_passing"] is not None]
+    rushing_allowed = [row["opponent_rushing"] for row in opponent_rows if row["opponent_rushing"] is not None]
+    avg_passing_allowed = sum(passing_allowed) / len(passing_allowed) if passing_allowed else None
+    avg_rushing_allowed = sum(rushing_allowed) / len(rushing_allowed) if rushing_allowed else None
+
+    return {
+        "passing_epa_avg": avg_passing,
+        "passing_epa_allowed_avg": avg_passing_allowed,
+        "rushing_epa_avg": avg_rushing,
+        "rushing_epa_allowed_avg": avg_rushing_allowed,
+    }
 
 
 def strength_of_schedule(conn: sqlite3.Connection, team_id: str, window: int) -> dict:

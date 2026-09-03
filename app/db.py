@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS team_game_stats (
     week INTEGER NOT NULL,
     turnovers INTEGER NOT NULL DEFAULT 0,
     epa_offense REAL,
+    epa_passing REAL,
+    epa_rushing REAL,
     plays REAL,
     UNIQUE(team_id, season, week)
 );
@@ -161,10 +163,11 @@ def replace_team_injuries(conn, team_id: str, injuries: list[dict], fetched_at: 
 def upsert_team_game_stat(conn, row: dict) -> None:
     conn.execute(
         """
-        INSERT INTO team_game_stats (team_id, season, week, turnovers, epa_offense, plays)
-        VALUES (:team_id, :season, :week, :turnovers, :epa_offense, :plays)
+        INSERT INTO team_game_stats (team_id, season, week, turnovers, epa_offense, epa_passing, epa_rushing, plays)
+        VALUES (:team_id, :season, :week, :turnovers, :epa_offense, :epa_passing, :epa_rushing, :plays)
         ON CONFLICT(team_id, season, week) DO UPDATE SET
-            turnovers=excluded.turnovers, epa_offense=excluded.epa_offense, plays=excluded.plays
+            turnovers=excluded.turnovers, epa_offense=excluded.epa_offense,
+            epa_passing=excluded.epa_passing, epa_rushing=excluded.epa_rushing, plays=excluded.plays
         """,
         row,
     )

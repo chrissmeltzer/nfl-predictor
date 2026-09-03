@@ -18,8 +18,8 @@ _ROOF_INDOOR_VALUES = {"dome", "closed"}
 
 TURNOVER_COLUMNS = ["interceptions", "rushing_fumbles_lost", "sack_fumbles_lost", "receiving_fumbles_lost"]
 EPA_COLUMNS = ["passing_epa", "rushing_epa"]
-# Rough offensive-plays proxy (dropbacks + rush attempts); column names unverified against a
-# live CSV header, same caveat as TURNOVER_COLUMNS/EPA_COLUMNS above.
+PASSING_EPA_COLUMNS = ["passing_epa"]
+RUSHING_EPA_COLUMNS = ["rushing_epa"]
 PLAY_COLUMNS = ["attempts", "carries"]
 
 
@@ -106,6 +106,8 @@ def parse_team_stats_csv(csv_text: str, min_season: int) -> list[dict]:
             "week": week,
             "turnovers": int(round(_sum_columns(row, TURNOVER_COLUMNS))),
             "epa_offense": _sum_columns(row, EPA_COLUMNS),
+            "epa_passing": _sum_columns(row, PASSING_EPA_COLUMNS),
+            "epa_rushing": _sum_columns(row, RUSHING_EPA_COLUMNS),
             "plays": plays_value if plays_value > 0 else None,
         })
     return stats

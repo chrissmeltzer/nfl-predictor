@@ -6,8 +6,11 @@ from app import db
 
 BASE_RATING = 1500.0
 K_FACTOR = 20.0
-# Matches FiveThirtyEight's historical NFL home-field Elo bonus (~48 rating points).
 HOME_FIELD_ADVANTAGE = 48.0
+# FiveThirtyEight regresses each team one-third of the way back to the mean between seasons,
+# i.e. retains two-thirds of its rating gap from 1500. This keeps early-season predictions
+# from over-trusting a single prior season's sample.
+SEASON_REGRESSION_FACTOR = 2.0 / 3.0
 
 
 def _expected_score(rating_a: float, rating_b: float) -> float:
@@ -15,27 +18,22 @@ def _expected_score(rating_a: float, rating_b: float) -> float:
 
 
 def _mov_multiplier(margin: int, elo_diff: float) -> float:
-    """FiveThirtyEight's margin-of-victory multiplier.
-
-    Rewards larger margins of victory while diminishing the impact of blowouts and of wins
-    that were already heavily favored, so a 45-point win by a team already expected to win
-    big doesn't swing ratings as much as a similar margin from an underdog would.
-    """
     return ((abs(margin) + 3) ** 0.8) / (7.5 + 0.006 * abs(elo_diff))
 
 
 def recompute_ratings(conn: sqlite3.Connection) -> dict[str, float]:
-    """Rebuild every team's Elo rating from scratch using all finalized games in order.
-
-    Ratings are recomputed fully each time (rather than updated incrementally) so newly
-    synced historical games are always reflected consistently, regardless of sync order.
-    """
     ratings = {row["id"]: BASE_RATING for row in conn.execute("SELECT id FROM teams").fetchall()}
     games = conn.execute(
         "SELECT * FROM games WHERE status = 'final' ORDER BY season ASC, week ASC, kickoff_at ASC, id ASC"
     ).fetchall()
 
+    current_season = None
     for game in games:
+        if current_season is not None and game["season"] != current_season:
+            for team_id in ratings:
+                ratings[team_id] = BASE_RATING + (ratings[team_id] - BASE_RATING) * SEASON_REGRESSION_FACTOR
+        current_season = game["season"]
+
         home_id, away_id = game["home_team_id"], game["away_team_id"]
         if home_id not in ratings or away_id not in ratings:
             continue

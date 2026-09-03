@@ -9,4 +9,6 @@ strength_of_schedule: 0.5
 elo: 0.35
 total_points_anchor: 0.5
 pace: 0.3
+recency_trend: 0.5
+travel: 0.5
 recent_games_window: 8
