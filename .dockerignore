@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+.git
+.gitignore
+nfl.db
+weights.suggested.yaml
+docs
+tests
+README.md
