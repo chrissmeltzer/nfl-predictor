@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS predictions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_predictions_game ON predictions(game_id);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -110,6 +115,19 @@ def upsert_weather(conn, game_id: str, weather: dict, fetched_at: str) -> None:
         """,
         {"game_id": game_id, "fetched_at": fetched_at, **weather},
     )
+
+
+def set_meta(conn, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+
+
+def get_meta(conn, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
 
 
 def replace_team_injuries(conn, team_id: str, injuries: list[dict], fetched_at: str) -> None:

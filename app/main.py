@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -28,11 +28,11 @@ def get_db():
 
 
 def _is_stale(conn) -> bool:
-    row = conn.execute("SELECT MAX(fetched_at) as latest FROM weather_forecasts").fetchone()
-    if not row or not row["latest"]:
+    latest = db.get_meta(conn, "last_synced_at")
+    if not latest:
         return True
-    latest = datetime.fromisoformat(row["latest"])
-    return datetime.now(timezone.utc) - latest > timedelta(hours=STALENESS_HOURS)
+    latest_dt = datetime.fromisoformat(latest)
+    return datetime.now(timezone.utc) - latest_dt > timedelta(hours=STALENESS_HOURS)
 
 
 @app.post("/sync")
@@ -69,9 +69,12 @@ def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
 @app.get("/games/{game_id}", response_class=HTMLResponse)
 def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
     game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
+    if game is None:
+        raise HTTPException(status_code=404)
     weights = predict.load_weights(WEIGHTS_PATH)
     result = predict.predict_game(conn, weights, game)
-    predict.save_prediction(conn, game_id, result, weights)
+    if game["status"] != "final":
+        predict.save_prediction(conn, game_id, result, weights)
 
     home_team = conn.execute("SELECT * FROM teams WHERE id = ?", (game["home_team_id"],)).fetchone()
     away_team = conn.execute("SELECT * FROM teams WHERE id = ?", (game["away_team_id"],)).fetchone()
@@ -100,6 +103,7 @@ def accuracy(request: Request, conn=Depends(get_db)):
         JOIN teams ht ON ht.id = g.home_team_id
         JOIN teams at_ ON at_.id = g.away_team_id
         WHERE g.status = 'final'
+          AND p.id IN (SELECT MAX(id) FROM predictions GROUP BY game_id)
         ORDER BY p.created_at DESC
         """
     ).fetchall()

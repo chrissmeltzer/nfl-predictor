@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -20,6 +20,8 @@ def make_test_client(tmp_path, monkeypatch):
         "INSERT INTO weather_forecasts (game_id, temp_f, wind_mph, precip_pct, fetched_at) VALUES (?, ?, ?, ?, ?)",
         ("g1", 60, 5, 10, datetime.now(timezone.utc).isoformat()),
     )
+    # Mark the DB as freshly synced so route tests don't trigger a real sync_all.
+    db.set_meta(conn, "last_synced_at", datetime.now(timezone.utc).isoformat())
     conn.commit()
     conn.close()
 
@@ -58,3 +60,115 @@ def test_accuracy_page_loads_with_no_predictions_yet(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     response = client.get("/accuracy")
     assert response.status_code == 200
+
+
+def test_game_detail_404_for_nonexistent_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.get("/games/nonexistent-id")
+    assert response.status_code == 404
+
+
+def test_game_detail_does_not_save_prediction_for_final_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+
+    conn = db.get_connection(tmp_path / "test.db")
+    db.upsert_game(conn, {
+        "id": "g_final", "season": 2026, "week": 1, "home_team_id": "A", "away_team_id": "B",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "X", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "final", "home_score": 24, "away_score": 17,
+    })
+    conn.commit()
+    conn.close()
+
+    response = client.get("/games/g_final")
+    assert response.status_code == 200
+
+    conn = db.get_connection(tmp_path / "test.db")
+    row = conn.execute("SELECT * FROM predictions WHERE game_id = 'g_final'").fetchone()
+    conn.close()
+    assert row is None
+
+
+def test_accuracy_dedupes_multiple_predictions_for_same_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+
+    # Two page views of the same scheduled game log two prediction rows.
+    client.get("/games/g1")
+    client.get("/games/g1")
+
+    conn = db.get_connection(tmp_path / "test.db")
+    pred_count = conn.execute(
+        "SELECT COUNT(*) as c FROM predictions WHERE game_id = 'g1'"
+    ).fetchone()["c"]
+    assert pred_count == 2
+
+    conn.execute("UPDATE games SET status = 'final', home_score = 24, away_score = 17 WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/accuracy")
+    assert response.status_code == 200
+    # Exactly one row should be rendered for g1 despite the two saved predictions.
+    assert response.text.count("B @ A") == 1
+
+
+def test_accuracy_computes_mean_errors_correctly(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+
+    conn = db.get_connection(tmp_path / "test.db")
+    db.upsert_team(conn, {"id": "C", "name": "Team C", "abbreviation": "C"})
+    db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})
+    db.upsert_game(conn, {
+        "id": "g_acc1", "season": 2026, "week": 1, "home_team_id": "A", "away_team_id": "B",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "X", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "final", "home_score": 21, "away_score": 20,
+    })
+    db.upsert_game(conn, {
+        "id": "g_acc2", "season": 2026, "week": 1, "home_team_id": "C", "away_team_id": "D",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "Y", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "final", "home_score": 30, "away_score": 10,
+    })
+    # game 1: predicted home 24, away 17 -> predicted margin +7, actual margin +1 -> margin_error 6
+    #         predicted total 41, actual total 41 -> total_error 0
+    conn.execute(
+        "INSERT INTO predictions (game_id, predicted_home_score, predicted_away_score, "
+        "factor_breakdown_json, weights_snapshot_json, created_at) VALUES (?, ?, ?, '{}', '{}', ?)",
+        ("g_acc1", 24, 17, "2026-09-09T00:00:00+00:00"),
+    )
+    # game 2: predicted home 28, away 14 -> predicted margin +14, actual margin +20 -> margin_error 6
+    #         predicted total 42, actual total 40 -> total_error 2
+    conn.execute(
+        "INSERT INTO predictions (game_id, predicted_home_score, predicted_away_score, "
+        "factor_breakdown_json, weights_snapshot_json, created_at) VALUES (?, ?, ?, '{}', '{}', ?)",
+        ("g_acc2", 28, 14, "2026-09-09T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    response = client.get("/accuracy")
+    assert response.status_code == 200
+    assert "Mean margin error: 6.0 points" in response.text
+    assert "Mean total-points error: 1.0 points" in response.text
+
+
+def test_is_stale_true_when_no_meta_row(tmp_path):
+    conn = db.get_connection(tmp_path / "stale.db")
+    db.init_db(conn)
+    assert main._is_stale(conn) is True
+
+
+def test_is_stale_false_when_recently_synced(tmp_path):
+    conn = db.get_connection(tmp_path / "stale.db")
+    db.init_db(conn)
+    db.set_meta(conn, "last_synced_at", datetime.now(timezone.utc).isoformat())
+    conn.commit()
+    assert main._is_stale(conn) is False
+
+
+def test_is_stale_true_when_synced_long_ago(tmp_path):
+    conn = db.get_connection(tmp_path / "stale.db")
+    db.init_db(conn)
+    old = datetime.now(timezone.utc) - timedelta(hours=main.STALENESS_HOURS + 1)
+    db.set_meta(conn, "last_synced_at", old.isoformat())
+    conn.commit()
+    assert main._is_stale(conn) is True
