@@ -12,6 +12,7 @@ from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE
 
 INJURY_STATUSES_COUNTED = {"Out", "Doubtful", "Injured Reserve"}
 LEAGUE_AVERAGE_SCORE = 21.0
+ADVANCED_STATS_WINDOW = 8
 
 
 def load_weights(path: Path) -> dict:
@@ -80,6 +81,34 @@ def _injuries_adjustment(conn, team_id: str, weight: float) -> float:
     return weight * _clamp(total, -10, 0)
 
 
+def _turnover_adjustment(conn, team_id: str, weight: float) -> float:
+    committed = stats.turnover_form(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_committed"]
+    forced = stats.turnovers_forced(conn, team_id, ADVANCED_STATS_WINDOW)["avg_turnovers_forced"]
+    if committed is None or forced is None:
+        return 0.0
+    margin = forced - committed
+    # Each net turnover is worth roughly 4 points of field position and possession value.
+    return weight * _clamp(margin * 4, -6, 6)
+
+
+def _epa_adjustment(conn, team_id: str, weight: float) -> float:
+    form = stats.epa_form(conn, team_id, ADVANCED_STATS_WINDOW)
+    if form["epa_offense_avg"] is None or form["epa_allowed_avg"] is None:
+        return 0.0
+    net_epa = form["epa_offense_avg"] - form["epa_allowed_avg"]
+    # Team EPA/play typically ranges roughly -0.3 to +0.3; scale into point space.
+    return weight * _clamp(net_epa * 20, -8, 8)
+
+
+def _strength_of_schedule_adjustment(conn, team_id: str, baseline_delta: float, weight: float) -> float:
+    sos = stats.strength_of_schedule(conn, team_id, ADVANCED_STATS_WINDOW)
+    if sos["opponent_epa_avg"] is None:
+        return 0.0
+    # Scale recent-form trust up when opponents were strong, down when opponents were weak.
+    difficulty_factor = _clamp(sos["opponent_epa_avg"] * 10, -1, 1)
+    return weight * baseline_delta * difficulty_factor * 0.5
+
+
 def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> dict:
     window = weights.get("recent_games_window", 8)
     home_id, away_id = game["home_team_id"], game["away_team_id"]
@@ -117,6 +146,11 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
                 if game["kickoff_at"] else 0.0
             ),
             "injuries": _injuries_adjustment(conn, team_id, weights.get("injuries", 1.0)),
+            "turnovers": _turnover_adjustment(conn, team_id, weights.get("turnovers", 1.0)),
+            "epa": _epa_adjustment(conn, team_id, weights.get("epa", 1.0)),
+            "strength_of_schedule": _strength_of_schedule_adjustment(
+                conn, team_id, baseline - LEAGUE_AVERAGE_SCORE, weights.get("strength_of_schedule", 0.5)
+            ),
         }
         breakdown[side] = {"baseline": baseline, **adjustments}
         return baseline + sum(adjustments.values())

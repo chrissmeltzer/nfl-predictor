@@ -92,3 +92,93 @@ def rest_days(conn: sqlite3.Connection, team_id: str, before: str) -> int | None
     last = datetime.fromisoformat(row["kickoff_at"].replace("Z", "+00:00"))
     upcoming = datetime.fromisoformat(before.replace("Z", "+00:00"))
     return (upcoming - last).days
+
+
+def _team_game_stats(conn: sqlite3.Connection, team_id: str, window: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM team_game_stats WHERE team_id = ? ORDER BY season DESC, week DESC LIMIT ?",
+        (team_id, window),
+    ).fetchall()
+
+
+def turnover_form(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
+    rows = _team_game_stats(conn, team_id, window)
+    if not rows:
+        return {"avg_turnovers_committed": None, "games_counted": 0}
+    committed = [row["turnovers"] for row in rows]
+    return {"avg_turnovers_committed": sum(committed) / len(committed), "games_counted": len(rows)}
+
+
+def turnovers_forced(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
+    rows = conn.execute(
+        """
+        SELECT tgs.turnovers AS opponent_turnovers
+        FROM games g
+        JOIN team_game_stats tgs
+          ON tgs.season = g.season AND tgs.week = g.week
+         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
+        ORDER BY g.season DESC, g.week DESC
+        LIMIT ?
+        """,
+        (team_id, team_id, team_id, window),
+    ).fetchall()
+    if not rows:
+        return {"avg_turnovers_forced": None}
+    values = [row["opponent_turnovers"] for row in rows]
+    return {"avg_turnovers_forced": sum(values) / len(values)}
+
+
+def epa_form(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
+    rows = _team_game_stats(conn, team_id, window)
+    offense_values = [row["epa_offense"] for row in rows if row["epa_offense"] is not None]
+    avg_offense = sum(offense_values) / len(offense_values) if offense_values else None
+
+    opponent_rows = conn.execute(
+        """
+        SELECT tgs.epa_offense AS opponent_epa
+        FROM games g
+        JOIN team_game_stats tgs
+          ON tgs.season = g.season AND tgs.week = g.week
+         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
+        ORDER BY g.season DESC, g.week DESC
+        LIMIT ?
+        """,
+        (team_id, team_id, team_id, window),
+    ).fetchall()
+    allowed_values = [row["opponent_epa"] for row in opponent_rows if row["opponent_epa"] is not None]
+    avg_allowed = sum(allowed_values) / len(allowed_values) if allowed_values else None
+
+    return {"epa_offense_avg": avg_offense, "epa_allowed_avg": avg_allowed}
+
+
+def strength_of_schedule(conn: sqlite3.Connection, team_id: str, window: int) -> dict:
+    """Average offensive EPA quality of a team's recent opponents.
+
+    This is a simplified proxy for strength of schedule: it looks at how strong (by their own
+    offensive EPA) the opponents faced in the team's last ``window`` games have been, so a hot
+    scoring streak against weak defenses can be weighted differently than one against strong ones.
+    """
+    opponent_rows = conn.execute(
+        """
+        SELECT CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END AS opponent_id
+        FROM games g
+        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
+        ORDER BY g.season DESC, g.week DESC
+        LIMIT ?
+        """,
+        (team_id, team_id, team_id, window),
+    ).fetchall()
+    if not opponent_rows:
+        return {"opponent_epa_avg": None}
+
+    epa_values = []
+    for row in opponent_rows:
+        opponent_form = epa_form(conn, row["opponent_id"], window)
+        if opponent_form["epa_offense_avg"] is not None:
+            epa_values.append(opponent_form["epa_offense_avg"])
+
+    if not epa_values:
+        return {"opponent_epa_avg": None}
+    return {"opponent_epa_avg": sum(epa_values) / len(epa_values)}

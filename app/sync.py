@@ -44,6 +44,22 @@ def sync_historical(conn, client: httpx.Client, min_season: int, max_season: int
     conn.commit()
 
 
+def sync_team_stats(conn, client: httpx.Client, current_season: int, seasons_back: int) -> None:
+    """Sync per-team-per-week turnover and offensive EPA stats used by the prediction model."""
+    for season in range(current_season - seasons_back, current_season + 1):
+        try:
+            rows = nflverse.fetch_team_stats(client, season)
+        except httpx.HTTPError:
+            logger.warning("Skipping team stats for season %s: fetch failed", season)
+            continue
+        for row in rows:
+            team_id = db.get_team_id_by_abbreviation(conn, row["team_abbreviation"])
+            if not team_id:
+                continue
+            db.upsert_team_game_stat(conn, {**row, "team_id": team_id})
+        conn.commit()
+
+
 def sync_schedule(conn, client: httpx.Client, season: int, week: int) -> list[dict]:
     games = espn.fetch_scoreboard(client, season, week)
     for game in games:
@@ -105,6 +121,7 @@ def sync_injuries_for_upcoming(conn, client: httpx.Client) -> None:
 def sync_all(conn, client: httpx.Client, current_season: int) -> None:
     sync_teams(conn, client)
     sync_historical(conn, client, min_season=current_season - SYNC_SEASONS_BACK, max_season=current_season)
+    sync_team_stats(conn, client, current_season, SYNC_SEASONS_BACK)
     season, week = espn.fetch_current_week(client)
     for w in range(1, week + 3):
         sync_schedule(conn, client, season, w)
