@@ -8,7 +8,7 @@ import httpx
 
 from app import db
 from app.config import SYNC_SEASONS_BACK
-from app.reference import STADIUMS
+from app.reference import STADIUMS, canonical_abbreviation
 from app.sources import espn, nflverse, weather
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,10 @@ def sync_teams(conn, client: httpx.Client) -> None:
     conn.commit()
 
 
-def sync_historical(conn, client: httpx.Client, min_season: int) -> None:
+def sync_historical(conn, client: httpx.Client, min_season: int, max_season: int | None = None) -> None:
     for game in nflverse.fetch_games_csv(client, min_season):
+        if max_season is not None and game["season"] >= max_season:
+            continue
         home_id = db.get_team_id_by_abbreviation(conn, game["home_abbreviation"])
         away_id = db.get_team_id_by_abbreviation(conn, game["away_abbreviation"])
         if not home_id or not away_id:
@@ -74,8 +76,11 @@ def sync_injuries_for_upcoming(conn, client: httpx.Client) -> None:
     game_ids = [
         row["id"] for row in conn.execute("SELECT id FROM games WHERE status = 'scheduled'").fetchall()
     ]
+    total_teams = conn.execute("SELECT COUNT(*) as c FROM teams").fetchone()["c"]
     seen_teams: set[str] = set()
     for game_id in game_ids:
+        if total_teams and len(seen_teams) >= total_teams:
+            break
         try:
             summary = espn.fetch_game_summary(client, game_id)
         except httpx.HTTPError:
@@ -84,20 +89,26 @@ def sync_injuries_for_upcoming(conn, client: httpx.Client) -> None:
         by_team: dict[str, list[dict]] = {}
         for injury in espn.parse_injuries(summary):
             by_team.setdefault(injury["team_abbreviation"], []).append(injury)
-        for abbr, team_injuries in by_team.items():
+        # Iterate the summary's team blocks directly (not just by_team, which is
+        # built from parse_injuries and so omits teams with zero current injuries)
+        # so a team that has fully recovered still gets its stale rows cleared.
+        for team_block in summary.get("injuries", []):
+            abbr = canonical_abbreviation(team_block["team"]["abbreviation"])
             team_id = db.get_team_id_by_abbreviation(conn, abbr)
             if not team_id or team_id in seen_teams:
                 continue
-            db.replace_team_injuries(conn, team_id, team_injuries, _now_iso())
+            db.replace_team_injuries(conn, team_id, by_team.get(abbr, []), _now_iso())
             seen_teams.add(team_id)
     conn.commit()
 
 
 def sync_all(conn, client: httpx.Client, current_season: int) -> None:
     sync_teams(conn, client)
-    sync_historical(conn, client, min_season=current_season - SYNC_SEASONS_BACK)
+    sync_historical(conn, client, min_season=current_season - SYNC_SEASONS_BACK, max_season=current_season)
     season, week = espn.fetch_current_week(client)
     for w in range(1, week + 3):
         sync_schedule(conn, client, season, w)
     sync_weather_for_upcoming(conn, client)
     sync_injuries_for_upcoming(conn, client)
+    db.set_meta(conn, "last_synced_at", _now_iso())
+    conn.commit()

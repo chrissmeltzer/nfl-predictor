@@ -45,6 +45,37 @@ def test_sync_historical_resolves_team_ids_and_stadium_coords(tmp_path, monkeypa
     assert row["lat"] == 47.5952
 
 
+def test_sync_historical_max_season_excludes_rows_at_or_above_bound(tmp_path, monkeypatch):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
+    db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
+    conn.commit()
+
+    monkeypatch.setattr(
+        sync.nflverse, "fetch_games_csv",
+        lambda client, min_season: [
+            {
+                "id": "2024_01_NE_SEA", "season": 2024, "week": 1,
+                "home_abbreviation": "SEA", "away_abbreviation": "NE",
+                "kickoff_at": None, "venue_name": "Lumen Field", "is_outdoor": True,
+                "status": "final", "home_score": 27, "away_score": 20,
+            },
+            {
+                "id": "2026_01_NE_SEA", "season": 2026, "week": 1,
+                "home_abbreviation": "SEA", "away_abbreviation": "NE",
+                "kickoff_at": None, "venue_name": "Lumen Field", "is_outdoor": True,
+                "status": "final", "home_score": 30, "away_score": 24,
+            },
+        ],
+    )
+    sync.sync_historical(conn, client=None, min_season=2024, max_season=2026)
+
+    old_row = conn.execute("SELECT * FROM games WHERE id = '2024_01_NE_SEA'").fetchone()
+    assert old_row is not None
+    current_row = conn.execute("SELECT * FROM games WHERE id = '2026_01_NE_SEA'").fetchone()
+    assert current_row is None
+
+
 def test_sync_historical_skips_unknown_team(tmp_path, monkeypatch):
     conn = make_conn(tmp_path)
     monkeypatch.setattr(
@@ -168,3 +199,83 @@ def test_sync_injuries_for_upcoming_continues_past_one_failure(tmp_path, monkeyp
     row = conn.execute("SELECT * FROM injuries WHERE team_id = '17'").fetchone()
     assert row["player_name"] == "Test Player"
     assert row["status"] == "Questionable"
+
+
+def test_sync_injuries_for_upcoming_clears_team_with_no_current_injuries(tmp_path, monkeypatch):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
+    db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
+    db.upsert_game(conn, {
+        "id": "g1", "season": 2026, "week": 1, "home_team_id": "26", "away_team_id": "17",
+        "kickoff_at": "2026-09-10T00:20Z", "venue_name": "Lumen Field", "is_outdoor": 1,
+        "lat": 47.5952, "lon": -122.3316, "status": "scheduled",
+        "home_score": None, "away_score": None,
+    })
+    conn.commit()
+    # Pre-seed a stale injury row for SEA (team_id "26") from a prior sync.
+    db.replace_team_injuries(
+        conn, "26",
+        [{"player_name": "Old Injury", "position": "WR", "status": "Out"}],
+        "2026-08-01T00:00:00+00:00",
+    )
+    conn.commit()
+
+    def fake_fetch_game_summary(client, event_id):
+        # Both teams present in the summary's team blocks, but SEA has fully recovered.
+        return {
+            "injuries": [
+                {"team": {"abbreviation": "SEA"}, "injuries": []},
+                {
+                    "team": {"abbreviation": "NE"},
+                    "injuries": [
+                        {
+                            "athlete": {"displayName": "Test Player", "position": {"abbreviation": "WR"}},
+                            "status": "Questionable",
+                        },
+                    ],
+                },
+            ],
+        }
+
+    monkeypatch.setattr(sync.espn, "fetch_game_summary", fake_fetch_game_summary)
+
+    sync.sync_injuries_for_upcoming(conn, client=None)
+
+    sea_rows = conn.execute("SELECT * FROM injuries WHERE team_id = '26'").fetchall()
+    assert sea_rows == []
+    ne_row = conn.execute("SELECT * FROM injuries WHERE team_id = '17'").fetchone()
+    assert ne_row["player_name"] == "Test Player"
+
+
+def test_sync_injuries_for_upcoming_stops_once_all_teams_seen(tmp_path, monkeypatch):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
+    db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
+    for i, gid in enumerate(["g1", "g2", "g3"]):
+        db.upsert_game(conn, {
+            "id": gid, "season": 2026, "week": i + 1, "home_team_id": "26", "away_team_id": "17",
+            "kickoff_at": f"2026-09-{10 + i}T00:20Z", "venue_name": "Lumen Field", "is_outdoor": 1,
+            "lat": 47.5952, "lon": -122.3316, "status": "scheduled",
+            "home_score": None, "away_score": None,
+        })
+    conn.commit()
+
+    calls = []
+
+    def fake_fetch_game_summary(client, event_id):
+        calls.append(event_id)
+        return {
+            "injuries": [
+                {"team": {"abbreviation": "SEA"}, "injuries": []},
+                {"team": {"abbreviation": "NE"}, "injuries": []},
+            ],
+        }
+
+    monkeypatch.setattr(sync.espn, "fetch_game_summary", fake_fetch_game_summary)
+
+    sync.sync_injuries_for_upcoming(conn, client=None)
+
+    # Only the total-team-count of games (2 total teams) is fully covered by g1;
+    # g3 should never be fetched since both teams were already seen after g1.
+    assert "g3" not in calls
+    assert calls == ["g1"]
