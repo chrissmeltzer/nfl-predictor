@@ -42,6 +42,18 @@ def test_recent_scoring_stats_respects_window(tmp_path):
     assert result["games_counted"] == 1
 
 
+def test_recent_scoring_stats_window_zero_returns_no_games(tmp_path):
+    conn = make_conn(tmp_path)
+    seed_game(conn, "g1", "A", "B", 20, 10, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "B", "A", 14, 30, "2026-09-08T00:00Z")
+    conn.commit()
+
+    result = stats.recent_scoring_stats(conn, "A", window=0)
+    assert result["avg_points_scored"] is None
+    assert result["avg_points_allowed"] is None
+    assert result["games_counted"] == 0
+
+
 def test_home_away_split(tmp_path):
     conn = make_conn(tmp_path)
     seed_game(conn, "g1", "A", "B", 30, 10, "2026-09-01T00:00Z")  # A home

@@ -10,7 +10,7 @@ def _team_games(conn: sqlite3.Connection, team_id: str, limit: int | None = None
         WHERE status = 'final' AND (home_team_id = ? OR away_team_id = ?)
         ORDER BY kickoff_at DESC, id DESC
     """
-    if limit:
+    if limit is not None:
         query += f" LIMIT {int(limit)}"
     return conn.execute(query, (team_id, team_id)).fetchall()
 
