@@ -237,13 +237,17 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
     team = conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
+
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        current_season, _ = espn.fetch_current_week(client)
+
     games = conn.execute(
         """
         SELECT * FROM games
-        WHERE home_team_id = ? OR away_team_id = ?
-        ORDER BY season DESC, week ASC, kickoff_at ASC
+        WHERE (home_team_id = ? OR away_team_id = ?) AND season = ?
+        ORDER BY week ASC, kickoff_at ASC
         """,
-        (team_id, team_id),
+        (team_id, team_id, current_season),
     ).fetchall()
     teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
     weights = predict.load_weights(WEIGHTS_PATH)
@@ -257,6 +261,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
             request,
             team=team,
             team_logo=_logo_url(team),
+            season=current_season,
             schedule_rows=schedule_rows,
             upcoming_count=len(upcoming),
             teams=list(teams.values()),
