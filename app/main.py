@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -35,6 +35,67 @@ def _is_stale(conn) -> bool:
     return datetime.now(timezone.utc) - latest_dt > timedelta(hours=STALENESS_HOURS)
 
 
+def _logo_url(team) -> str:
+    return f"https://a.espncdn.com/i/teamlogos/nfl/500/{team['abbreviation'].lower()}.png"
+
+
+def _format_kickoff(value: str | None) -> str:
+    if not value:
+        return "Kickoff TBD"
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%a, %b %-d · %-I:%M %p")
+    except ValueError:
+        return value
+
+
+def _win_probability(team_score: float, opponent_score: float) -> int:
+    margin = team_score - opponent_score
+    return max(5, min(95, round(50 + margin * 4)))
+
+
+def _game_view(game, teams, result: dict, selected_team_id: str | None = None) -> dict:
+    home = teams[game["home_team_id"]]
+    away = teams[game["away_team_id"]]
+    home_score = result["predicted_home_score"]
+    away_score = result["predicted_away_score"]
+    winner = home if home_score >= away_score else away
+    view = {
+        "game": game,
+        "home": home,
+        "away": away,
+        "home_logo": _logo_url(home),
+        "away_logo": _logo_url(away),
+        "home_score": home_score,
+        "away_score": away_score,
+        "winner": winner,
+        "home_probability": _win_probability(home_score, away_score),
+        "away_probability": _win_probability(away_score, home_score),
+        "kickoff": _format_kickoff(game["kickoff_at"]),
+    }
+    if selected_team_id:
+        is_home = game["home_team_id"] == selected_team_id
+        team = home if is_home else away
+        opponent = away if is_home else home
+        team_score = home_score if is_home else away_score
+        opponent_score = away_score if is_home else home_score
+        view.update({
+            "team": team,
+            "opponent": opponent,
+            "team_logo": _logo_url(team),
+            "opponent_logo": _logo_url(opponent),
+            "team_score": team_score,
+            "opponent_score": opponent_score,
+            "team_probability": _win_probability(team_score, opponent_score),
+            "is_home": is_home,
+            "location": "vs" if is_home else "at",
+        })
+    return view
+
+
+def _template_context(request: Request, **kwargs) -> dict:
+    return {"request": request, **kwargs}
+
+
 @app.post("/sync")
 def trigger_sync(conn=Depends(get_db)):
     with httpx.Client(timeout=30, follow_redirects=True) as client:
@@ -55,15 +116,59 @@ def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
         "SELECT * FROM games WHERE season = ? AND week = ? ORDER BY kickoff_at",
         (season, week),
     ).fetchall()
-    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams").fetchall()}
-
+    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
     weights = predict.load_weights(WEIGHTS_PATH)
-    game_predictions = {game["id"]: predict.predict_game(conn, weights, game) for game in games}
+    matchups = [_game_view(game, teams, predict.predict_game(conn, weights, game)) for game in games]
 
-    return templates.TemplateResponse(request, "index.html", {
-        "games": games, "predictions": game_predictions,
-        "teams": teams, "week": week, "season": season,
-    })
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        _template_context(request, matchups=matchups, teams=list(teams.values()), week=week, season=season),
+    )
+
+
+@app.get("/teams")
+def team_search(q: str = "", conn=Depends(get_db)):
+    query = q.strip().lower()
+    if not query:
+        return RedirectResponse(url="/", status_code=303)
+    teams = conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
+    match = next((team for team in teams if query in team["name"].lower() or query == team["abbreviation"].lower()), None)
+    if not match:
+        return RedirectResponse(url="/?team_not_found=1", status_code=303)
+    return RedirectResponse(url=f"/teams/{match['id']}", status_code=303)
+
+
+@app.get("/teams/{team_id}", response_class=HTMLResponse)
+def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
+    team = conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    games = conn.execute(
+        """
+        SELECT * FROM games
+        WHERE home_team_id = ? OR away_team_id = ?
+        ORDER BY season DESC, week ASC, kickoff_at ASC
+        """,
+        (team_id, team_id),
+    ).fetchall()
+    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
+    weights = predict.load_weights(WEIGHTS_PATH)
+    schedule_rows = [_game_view(game, teams, predict.predict_game(conn, weights, game), team_id) for game in games]
+    upcoming = [row for row in schedule_rows if row["game"]["status"] != "final"]
+
+    return templates.TemplateResponse(
+        request,
+        "team_detail.html",
+        _template_context(
+            request,
+            team=team,
+            team_logo=_logo_url(team),
+            schedule_rows=schedule_rows,
+            upcoming_count=len(upcoming),
+            teams=list(teams.values()),
+        ),
+    )
 
 
 @app.get("/games/{game_id}", response_class=HTMLResponse)
@@ -82,13 +187,18 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
     injuries_home = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["home_team_id"],)).fetchall()
     injuries_away = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["away_team_id"],)).fetchall()
     head_to_head = stats.head_to_head(conn, game["home_team_id"], game["away_team_id"])
+    matchup = _game_view(game, {home_team["id"]: home_team, away_team["id"]: away_team}, result)
 
-    return templates.TemplateResponse(request, "game_detail.html", {
-        "game": game, "result": result,
-        "home_team": home_team, "away_team": away_team,
-        "weather": weather_row, "injuries_home": injuries_home, "injuries_away": injuries_away,
-        "head_to_head": head_to_head,
-    })
+    return templates.TemplateResponse(
+        request,
+        "game_detail.html",
+        _template_context(
+            request, game=game, result=result, matchup=matchup, home_team=home_team, away_team=away_team,
+            home_logo=_logo_url(home_team), away_logo=_logo_url(away_team), weather=weather_row,
+            injuries_home=injuries_home, injuries_away=injuries_away, head_to_head=head_to_head,
+            teams=[home_team, away_team],
+        ),
+    )
 
 
 @app.get("/accuracy", response_class=HTMLResponse)
@@ -107,23 +217,17 @@ def accuracy(request: Request, conn=Depends(get_db)):
         ORDER BY p.created_at DESC
         """
     ).fetchall()
-
     errors = []
     for row in rows:
-        margin_error = abs(
-            (row["predicted_home_score"] - row["predicted_away_score"])
-            - (row["home_score"] - row["away_score"])
-        )
-        total_error = abs(
-            (row["predicted_home_score"] + row["predicted_away_score"])
-            - (row["home_score"] + row["away_score"])
-        )
+        margin_error = abs((row["predicted_home_score"] - row["predicted_away_score"]) - (row["home_score"] - row["away_score"]))
+        total_error = abs((row["predicted_home_score"] + row["predicted_away_score"]) - (row["home_score"] + row["away_score"]))
         errors.append({"row": row, "margin_error": margin_error, "total_error": total_error})
+    mean_margin_error = sum(error["margin_error"] for error in errors) / len(errors) if errors else None
+    mean_total_error = sum(error["total_error"] for error in errors) / len(errors) if errors else None
+    teams = conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
 
-    mean_margin_error = sum(e["margin_error"] for e in errors) / len(errors) if errors else None
-    mean_total_error = sum(e["total_error"] for e in errors) / len(errors) if errors else None
-
-    return templates.TemplateResponse(request, "accuracy.html", {
-        "errors": errors,
-        "mean_margin_error": mean_margin_error, "mean_total_error": mean_total_error,
-    })
+    return templates.TemplateResponse(
+        request,
+        "accuracy.html",
+        _template_context(request, errors=errors, mean_margin_error=mean_margin_error, mean_total_error=mean_total_error, teams=teams),
+    )

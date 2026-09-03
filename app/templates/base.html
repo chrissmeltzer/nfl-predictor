@@ -1,22 +1,43 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>NFL Predictor</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b18">
+  <title>{% block title %}Fourth Down Forecast{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
 </head>
 <body>
-  <header>
-    <nav>
-      <a href="/">Schedule</a>
-      <a href="/accuracy">Accuracy</a>
-      <form method="post" action="/sync" onsubmit="return confirm('Refresh data from ESPN/nflverse/Open-Meteo now?');">
-        <button type="submit">Refresh Data</button>
+  <div class="page-glow page-glow-one"></div>
+  <div class="page-glow page-glow-two"></div>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="/" aria-label="Fourth Down Forecast home">
+        <span class="brand-mark">4D</span>
+        <span><strong>Fourth Down</strong><small>Forecast</small></span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="/">Predictions</a>
+        <a href="/accuracy">Accuracy</a>
+      </nav>
+      <form class="team-search" action="/teams" method="get" role="search">
+        <label class="sr-only" for="team-query">Search an NFL team</label>
+        <input id="team-query" name="q" list="teams" placeholder="Find a team…" autocomplete="off">
+        <datalist id="teams">
+          {% for nav_team in teams | default([]) %}
+          <option value="{{ nav_team.name }}">{{ nav_team.abbreviation }}</option>
+          {% endfor %}
+        </datalist>
+        <button type="submit">Search</button>
       </form>
-    </nav>
+    </div>
   </header>
-  <main>
+  <main class="shell">
     {% block content %}{% endblock %}
   </main>
+  <footer class="site-footer shell">
+    <span>Model-driven NFL score projections</span>
+    <span>Updated from current schedule data</span>
+  </footer>
 </body>
 </html>

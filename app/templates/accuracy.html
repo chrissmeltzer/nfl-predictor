@@ -1,22 +1,8 @@
-{% extends "base.html" %}
+{% extends 'base.html' %}
+{% block title %}Model Accuracy · Fourth Down Forecast{% endblock %}
 {% block content %}
-<h1>Prediction Accuracy</h1>
-{% if mean_margin_error is not none %}
-<p>Mean margin error: {{ "%.1f"|format(mean_margin_error) }} points &middot; Mean total-points error: {{ "%.1f"|format(mean_total_error) }} points</p>
-{% else %}
-<p>No completed, predicted games yet.</p>
-{% endif %}
-<table>
-  <thead><tr><th>Game</th><th>Predicted</th><th>Actual</th><th>Margin Error</th></tr></thead>
-  <tbody>
-    {% for e in errors %}
-    <tr>
-      <td>{{ e.row.away_abbr }} @ {{ e.row.home_abbr }}</td>
-      <td>{{ "%.1f"|format(e.row.predicted_away_score) }} &ndash; {{ "%.1f"|format(e.row.predicted_home_score) }}</td>
-      <td>{{ e.row.away_score }} &ndash; {{ e.row.home_score }}</td>
-      <td>{{ "%.1f"|format(e.margin_error) }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<section class="hero compact-hero"><div><p class="eyebrow">Model performance</p><h1>Accuracy tracker.</h1><p class="hero-copy">Review how projected margins and game totals compare with completed games.</p></div></section>
+<div class="metric-grid"><section class="metric-card"><span>Final games tracked</span><strong>{{ errors | length }}</strong></section><section class="metric-card"><span>Mean margin error</span><strong>{% if mean_margin_error is not none %}{{ '%.1f' | format(mean_margin_error) }}{% else %}—{% endif %}</strong></section><section class="metric-card"><span>Mean total error</span><strong>{% if mean_total_error is not none %}{{ '%.1f' | format(mean_total_error) }}{% else %}—{% endif %}</strong></section></div>
+<section class="section-heading"><div><p class="eyebrow">Completed games</p><h2>Recent prediction results</h2></div></section>
+{% if errors %}<div class="table-wrap"><table><thead><tr><th>Matchup</th><th>Projected</th><th>Final</th><th>Margin error</th><th>Total error</th></tr></thead><tbody>{% for error in errors %}<tr><td><strong>{{ error.row.away_abbr }} @ {{ error.row.home_abbr }}</strong></td><td>{{ error.row.predicted_away_score }} – {{ error.row.predicted_home_score }}</td><td>{{ error.row.away_score }} – {{ error.row.home_score }}</td><td>{{ '%.1f' | format(error.margin_error) }}</td><td>{{ '%.1f' | format(error.total_error) }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<section class="empty-state"><h2>No finalized predictions yet.</h2><p>Completed games will appear here after the model saves a prediction and the final score is available.</p></section>{% endif %}
 {% endblock %}
