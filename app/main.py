@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -116,11 +117,14 @@ def _team_color(team) -> str:
     return TEAM_COLORS.get(team["abbreviation"], DEFAULT_TEAM_COLOR)
 
 
+_KICKOFF_DISPLAY_TZ = ZoneInfo("America/New_York")
+
+
 def _format_kickoff(value: str | None) -> str:
     if not value:
         return "Kickoff TBD"
     try:
-        return parse_kickoff(value).astimezone().strftime("%a, %b %-d · %-I:%M %p")
+        return parse_kickoff(value).astimezone(_KICKOFF_DISPLAY_TZ).strftime("%a, %b %-d · %-I:%M %p ET")
     except ValueError:
         return value
 
