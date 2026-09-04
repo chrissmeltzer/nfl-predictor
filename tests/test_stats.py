@@ -130,6 +130,30 @@ def test_head_to_head_ignores_meetings_after_cutoff(pg_url):
     assert result["avg_points_scored"] == 21
 
 
+def test_head_to_head_games_null_kickoff_does_not_crowd_out_dated_game(pg_url):
+    # Regression test: Postgres sorts NULL kickoff_at FIRST on ORDER BY ... DESC (the
+    # opposite of SQLite), so a naive "ORDER BY kickoff_at DESC ... LIMIT" would let the
+    # NULL-kickoff backfilled games (see app/sources/nflverse.py) fill the limit window
+    # and push out real, dated meetings entirely. With "NULLS LAST" the dated game must
+    # always survive a small limit even when outnumbered by NULL-kickoff games.
+    conn = make_conn(pg_url)
+    seed_game(conn, "g_null1", "A", "B", 10, 7, None)
+    seed_game(conn, "g_null2", "A", "B", 14, 21, None)
+    seed_game(conn, "g_null3", "A", "B", 17, 20, None)
+    seed_game(conn, "g_dated", "A", "B", 24, 23, "2026-09-01T00:00Z")
+    conn.commit()
+
+    meetings = stats.head_to_head_games(conn, "A", "B", limit=2)
+
+    assert len(meetings) == 2
+    kickoffs = [m["kickoff_at"] for m in meetings]
+    assert "2026-09-01T00:00Z" in kickoffs
+    # The dated game sorts before the NULL-kickoff games on the underlying
+    # "ORDER BY kickoff_at DESC NULLS LAST" query, so after head_to_head_games()
+    # reverses that window for chronological display, it lands last.
+    assert meetings[-1]["kickoff_at"] == "2026-09-01T00:00Z"
+
+
 def test_current_season_sample_size_ignores_games_after_cutoff(pg_url):
     conn = make_conn(pg_url)
     for i in range(8):

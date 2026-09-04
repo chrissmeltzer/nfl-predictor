@@ -530,7 +530,7 @@ def _recent_pick_accuracy(conn, team_id: str, limit: int = 5) -> dict | None:
         FROM games g
         JOIN predictions p ON p.game_id = g.id
         WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s)
-        ORDER BY g.kickoff_at DESC, g.id DESC
+        ORDER BY g.kickoff_at DESC NULLS LAST, g.id DESC
         LIMIT %s
         """,
         (team_id, team_id, limit),

@@ -9,6 +9,12 @@ final scores from free data (ESPN, nflverse, Open-Meteo).
     source .venv/bin/activate
     pip install -r requirements.txt
 
+The app also needs a Postgres database, configured via the `DATABASE_URL`
+environment variable (defaults to
+`postgresql://postgres:postgres@localhost:5432/nfl_predictor`). Run
+`docker compose up -d db` to start a local Postgres container matching that
+default.
+
 ## Run
 
     uvicorn app.main:app --reload

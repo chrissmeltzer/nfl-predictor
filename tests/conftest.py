@@ -1,5 +1,6 @@
 import os
 import uuid
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
@@ -10,7 +11,8 @@ ADMIN_DSN = os.environ.get(
 
 
 def _dsn_for(database: str) -> str:
-    return ADMIN_DSN.rsplit("/", 1)[0] + f"/{database}"
+    parts = urlsplit(ADMIN_DSN)
+    return urlunsplit(parts._replace(path=f"/{database}"))
 
 
 @pytest.fixture
@@ -33,7 +35,10 @@ def pg_db_factory():
 
     with psycopg.connect(ADMIN_DSN, autocommit=True) as admin_conn:
         for name in created:
-            admin_conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            try:
+                admin_conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            except Exception as exc:
+                print(f"warning: failed to drop test database {name!r}: {exc}")
 
 
 @pytest.fixture

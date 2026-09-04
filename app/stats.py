@@ -19,7 +19,7 @@ def _team_games(
     if before is not None:
         query += " AND kickoff_at < %s"
         params.append(before)
-    query += " ORDER BY kickoff_at DESC, id DESC"
+    query += " ORDER BY kickoff_at DESC NULLS LAST, id DESC"
     if limit is not None:
         query += f" LIMIT {int(limit)}"
     return conn.execute(query, params).fetchall()
@@ -154,7 +154,7 @@ def head_to_head_games(
     if before is not None:
         query += " AND kickoff_at < %s"
         params.append(before)
-    query += " ORDER BY kickoff_at DESC, id DESC LIMIT %s"
+    query += " ORDER BY kickoff_at DESC NULLS LAST, id DESC LIMIT %s"
     params.append(limit)
     games = conn.execute(query, params).fetchall()
 
