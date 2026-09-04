@@ -6,14 +6,14 @@ import httpx
 from app import db, sync
 
 
-def make_conn(tmp_path):
-    conn = db.get_connection(tmp_path / "test.db")
+def make_conn(dsn):
+    conn = db.get_connection(dsn)
     db.init_db(conn)
     return conn
 
 
-def test_sync_teams_inserts_rows(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_teams_inserts_rows(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     monkeypatch.setattr(
         sync.espn, "fetch_teams",
         lambda client: [{"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"}],
@@ -23,8 +23,8 @@ def test_sync_teams_inserts_rows(tmp_path, monkeypatch):
     assert row["abbreviation"] == "SEA"
 
 
-def test_sync_historical_resolves_team_ids_and_stadium_coords(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_historical_resolves_team_ids_and_stadium_coords(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     conn.commit()
@@ -45,8 +45,8 @@ def test_sync_historical_resolves_team_ids_and_stadium_coords(tmp_path, monkeypa
     assert row["lat"] == 47.5952
 
 
-def test_sync_historical_max_season_excludes_rows_at_or_above_bound(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_historical_max_season_excludes_rows_at_or_above_bound(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     conn.commit()
@@ -76,8 +76,8 @@ def test_sync_historical_max_season_excludes_rows_at_or_above_bound(tmp_path, mo
     assert current_row is None
 
 
-def test_sync_historical_skips_unknown_team(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_historical_skips_unknown_team(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     monkeypatch.setattr(
         sync.nflverse, "fetch_games_csv",
         lambda client, min_season: [{
@@ -92,8 +92,8 @@ def test_sync_historical_skips_unknown_team(tmp_path, monkeypatch):
     assert row is None
 
 
-def test_sync_weather_for_upcoming_only_fetches_outdoor_scheduled_games(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_weather_for_upcoming_only_fetches_outdoor_scheduled_games(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -124,8 +124,8 @@ def test_sync_weather_for_upcoming_only_fetches_outdoor_scheduled_games(tmp_path
     assert row["temp_f"] == 60
 
 
-def test_sync_weather_for_upcoming_continues_past_one_failure(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_weather_for_upcoming_continues_past_one_failure(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -157,8 +157,8 @@ def test_sync_weather_for_upcoming_continues_past_one_failure(tmp_path, monkeypa
     assert ok_row["temp_f"] == 55
 
 
-def test_sync_weather_for_upcoming_continues_past_missing_forecast_data(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_weather_for_upcoming_continues_past_missing_forecast_data(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -190,8 +190,8 @@ def test_sync_weather_for_upcoming_continues_past_missing_forecast_data(tmp_path
     assert ok_row["temp_f"] == 55
 
 
-def test_sync_predictions_saves_a_row_for_each_scheduled_game(tmp_path):
-    conn = make_conn(tmp_path)
+def test_sync_predictions_saves_a_row_for_each_scheduled_game(pg_url):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -208,8 +208,8 @@ def test_sync_predictions_saves_a_row_for_each_scheduled_game(tmp_path):
     assert row is not None
 
 
-def test_sync_predictions_skips_final_games(tmp_path):
-    conn = make_conn(tmp_path)
+def test_sync_predictions_skips_final_games(pg_url):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -226,8 +226,8 @@ def test_sync_predictions_skips_final_games(tmp_path):
     assert row is None
 
 
-def test_sync_injuries_for_upcoming_continues_past_one_failure(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_injuries_for_upcoming_continues_past_one_failure(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -270,8 +270,8 @@ def test_sync_injuries_for_upcoming_continues_past_one_failure(tmp_path, monkeyp
     assert row["status"] == "Questionable"
 
 
-def test_sync_injuries_for_upcoming_clears_team_with_no_current_injuries(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_injuries_for_upcoming_clears_team_with_no_current_injuries(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     db.upsert_game(conn, {
@@ -316,8 +316,8 @@ def test_sync_injuries_for_upcoming_clears_team_with_no_current_injuries(tmp_pat
     assert ne_row["player_name"] == "Test Player"
 
 
-def test_sync_injuries_for_upcoming_stops_once_all_teams_seen(tmp_path, monkeypatch):
-    conn = make_conn(tmp_path)
+def test_sync_injuries_for_upcoming_stops_once_all_teams_seen(pg_url, monkeypatch):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
     db.upsert_team(conn, {"id": "17", "name": "New England Patriots", "abbreviation": "NE"})
     for i, gid in enumerate(["g1", "g2", "g3"]):
