@@ -232,6 +232,36 @@ def test_team_detail_hides_accuracy_stat_with_no_final_predicted_games(tmp_path,
     assert "Model accuracy" not in response.text
 
 
+def test_team_detail_shows_remaining_strength_of_schedule(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    conn = db.get_connection(tmp_path / "test.db")
+    db.upsert_team(conn, {"id": "C", "name": "Team C", "abbreviation": "C"})
+    db.upsert_game(conn, {
+        # B beats C, so B's win_pct is 1.0 — A's only remaining opponent (via g1) is B.
+        "id": "g_bc", "season": 2026, "week": 1, "home_team_id": "B", "away_team_id": "C",
+        "kickoff_at": "2026-09-03T00:20Z", "venue_name": "X", "is_outdoor": False,
+        "lat": None, "lon": None, "status": "final", "home_score": 30, "away_score": 10,
+    })
+    conn.commit()
+    conn.close()
+
+    response = client.get("/teams/A")
+
+    assert response.status_code == 200
+    assert "Remaining SOS" in response.text
+    assert "100%" in response.text
+    assert "#1 of 1" in response.text
+
+
+def test_team_detail_hides_remaining_sos_when_opponent_data_unavailable(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+
+    response = client.get("/teams/A")
+
+    assert response.status_code == 200
+    assert "Remaining SOS" not in response.text
+
+
 def test_rankings_page_lists_teams_sorted_by_elo_desc(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     conn = db.get_connection(tmp_path / "test.db")

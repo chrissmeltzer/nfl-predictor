@@ -9,6 +9,9 @@
     {% if streak %}
     <div class="hero-stat"><span>Model accuracy</span><strong>{{ streak.correct }}/{{ streak.total }}</strong><small>last {{ streak.total }} picks</small></div>
     {% endif %}
+    {% if remaining_sos %}
+    <div class="hero-stat"><span>Remaining SOS</span><strong>{{ (remaining_sos.opponent_win_pct * 100) | round | int }}%</strong><small>#{{ remaining_sos.rank }} of {{ remaining_sos.teams_ranked }} · easiest</small></div>
+    {% endif %}
   </div>
 </section>
 

@@ -380,6 +380,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
         _game_view(conn, game, teams, predict.predict_game(conn, weights, game), team_id) for game in games
     ]
     upcoming = [row for row in schedule_rows if row["game"]["status"] != "final"]
+    remaining_sos = stats.remaining_strength_of_schedule(conn, current_season).get(team_id)
 
     return templates.TemplateResponse(
         request,
@@ -393,6 +394,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
             schedule_rows=schedule_rows,
             upcoming_count=len(upcoming),
             streak=_recent_pick_accuracy(conn, team_id),
+            remaining_sos=remaining_sos,
             teams=list(teams.values()),
         ),
     )
