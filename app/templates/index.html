@@ -49,7 +49,7 @@
     </div>
     <div class="probability-row">
       <span>{{ matchup.away_probability }}%</span>
-      <div class="probability-track" aria-label="{{ matchup.away.name }} {{ matchup.away_probability }} percent win probability"><i style="width: {{ matchup.away_probability }}%"></i></div>
+      <div class="probability-track" style="background: {{ matchup.home_color }}" aria-label="{{ matchup.away.name }} {{ matchup.away_probability }} percent win probability"><i style="width: {{ matchup.away_probability }}%; background: {{ matchup.away_color }}"></i></div>
       <span>{{ matchup.home_probability }}%</span>
     </div>
     <div class="card-footer-row">

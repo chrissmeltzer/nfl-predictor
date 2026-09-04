@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import betting, db, predict, stats, sync
 from app.config import DB_PATH, STALENESS_HOURS, WEIGHTS_PATH
+from app.reference import DEFAULT_TEAM_COLOR, TEAM_COLORS
 from app.sources import espn
 
 app = FastAPI()
@@ -108,6 +109,10 @@ def _pick_locked(game) -> bool:
 
 def _logo_url(team) -> str:
     return f"https://a.espncdn.com/i/teamlogos/nfl/500/{team['abbreviation'].lower()}.png"
+
+
+def _team_color(team) -> str:
+    return TEAM_COLORS.get(team["abbreviation"], DEFAULT_TEAM_COLOR)
 
 
 def _format_kickoff(value: str | None) -> str:
@@ -263,6 +268,8 @@ def _game_view(conn, game, teams, result: dict, selected_team_id: str | None = N
         "away": away,
         "home_logo": _logo_url(home),
         "away_logo": _logo_url(away),
+        "home_color": _team_color(home),
+        "away_color": _team_color(away),
         "home_score": home_score,
         "away_score": away_score,
         "winner": winner,
@@ -287,6 +294,8 @@ def _game_view(conn, game, teams, result: dict, selected_team_id: str | None = N
             "opponent": opponent,
             "team_logo": _logo_url(team),
             "opponent_logo": _logo_url(opponent),
+            "team_color": _team_color(team),
+            "opponent_color": _team_color(opponent),
             "team_score": team_score,
             "opponent_score": opponent_score,
             "team_probability": _win_probability(team_score, opponent_score),
