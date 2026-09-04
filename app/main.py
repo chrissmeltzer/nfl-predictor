@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -124,9 +125,21 @@ def _format_kickoff(value: str | None) -> str:
         return value
 
 
+_WIN_PROBABILITY_MARGIN_SCALE = 7.0
+
+
 def _win_probability(team_score: float, opponent_score: float) -> int:
+    """Logistic win probability from the projected margin.
+
+    A linear margin*4 formula saturates past an 11-point margin, so every bigger blowout
+    displayed the identical 95% (and therefore the identical moneyline). The logistic curve
+    keeps climbing past that point instead -- a 12-point favorite and a 21-point favorite
+    now read as visibly different probabilities -- while still clamping to 5-95 so the
+    display never claims a game is fully decided.
+    """
     margin = team_score - opponent_score
-    return max(5, min(95, round(50 + margin * 4)))
+    probability = 100 / (1 + math.exp(-margin / _WIN_PROBABILITY_MARGIN_SCALE))
+    return max(5, min(95, round(probability)))
 
 
 def _weather_severity(weather_row) -> dict | None:
