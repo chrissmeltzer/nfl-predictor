@@ -315,6 +315,33 @@ def test_strength_of_schedule_ignores_opponent_games_after_cutoff(pg_url):
     assert result["opponent_epa_avg"] == 0.2
 
 
+def test_strength_of_schedule_weights_repeat_opponent_once_per_meeting(pg_url):
+    """A opens the season against B twice (division rivals) and once against C. B's own form
+    should count twice in the average -- once per meeting -- same as if B and C were both faced
+    only once each but B had two distinct opponent slots."""
+    conn = make_conn(pg_url)
+    seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    seed_game(conn, "g2", "A", "C", 20, 17, "2026-09-08T00:00Z")
+    seed_game(conn, "g3", "A", "B", 20, 17, "2026-09-15T00:00Z")
+    db.upsert_team_game_stat(conn, {
+        "team_id": "B", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": 0.0, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    db.upsert_team_game_stat(conn, {
+        "team_id": "C", "season": 2026, "week": 1, "turnovers": 0,
+        "epa_offense": 0.6, "epa_passing": None, "epa_rushing": None, "plays": None,
+        "sacks_suffered": 0, "pass_attempts": 0, "def_sacks": 0,
+    })
+    conn.commit()
+
+    result = stats.strength_of_schedule(conn, "A", window=8, before=(2026, 4))
+
+    # Opponent order is B, C, B (most recent first) -- average of [0.0, 0.6, 0.0], not
+    # the distinct-opponent average of [0.0, 0.6].
+    assert result["opponent_epa_avg"] == (0.0 + 0.6 + 0.0) / 3
+
+
 def test_remaining_strength_of_schedule_ranks_easiest_first(pg_url):
     conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})

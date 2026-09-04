@@ -62,6 +62,72 @@ def recompute_ratings(conn, before: tuple[int, int] | None = None) -> dict[str, 
     return ratings
 
 
+def rating_timeline(conn) -> list[tuple[tuple[int, int] | None, dict[str, float]]]:
+    """Replay every finalized game once, recording ratings as they stood immediately before
+    each distinct (season, week) was played.
+
+    A page that needs "ratings before game X" for many different games (e.g. a team's full
+    season schedule) would otherwise call recompute_ratings() -- a full history replay -- once
+    per game. Call this once instead and look up each cutoff with ratings_before(), which does
+    no further DB work.
+    """
+    ratings = {row["id"]: BASE_RATING for row in conn.execute("SELECT id FROM teams").fetchall()}
+    games = conn.execute(
+        "SELECT * FROM games WHERE status = 'final' ORDER BY season ASC, week ASC, kickoff_at ASC, id ASC"
+    ).fetchall()
+
+    # First entry: ratings before any finalized game exists at all.
+    timeline: list[tuple[tuple[int, int] | None, dict[str, float]]] = [(None, dict(ratings))]
+    current_season = None
+    current_week_key: tuple[int, int] | None = None
+    for game in games:
+        week_key = (game["season"], game["week"])
+        if current_week_key is not None and week_key != current_week_key:
+            timeline.append((current_week_key, dict(ratings)))
+
+        if current_season is not None and game["season"] != current_season:
+            for team_id in ratings:
+                ratings[team_id] = BASE_RATING + (ratings[team_id] - BASE_RATING) * SEASON_REGRESSION_FACTOR
+        current_season = game["season"]
+        current_week_key = week_key
+
+        home_id, away_id = game["home_team_id"], game["away_team_id"]
+        if home_id not in ratings or away_id not in ratings:
+            continue
+
+        home_rating = ratings[home_id]
+        away_rating = ratings[away_id]
+        elo_diff = (home_rating + HOME_FIELD_ADVANTAGE) - away_rating
+        expected_home = _expected_score(home_rating + HOME_FIELD_ADVANTAGE, away_rating)
+
+        margin = game["home_score"] - game["away_score"]
+        actual_home = 1.0 if margin > 0 else (0.0 if margin < 0 else 0.5)
+
+        change = K_FACTOR * _mov_multiplier(margin, elo_diff) * (actual_home - expected_home)
+        ratings[home_id] = home_rating + change
+        ratings[away_id] = away_rating - change
+
+    if current_week_key is not None:
+        timeline.append((current_week_key, dict(ratings)))
+    return timeline
+
+
+def ratings_before(
+    timeline: list[tuple[tuple[int, int] | None, dict[str, float]]], before: tuple[int, int]
+) -> dict[str, float]:
+    """Ratings as of immediately before `before`, from a timeline built by rating_timeline().
+
+    Matches recompute_ratings(conn, before=before) -- same "season < s or (season == s and
+    week < w)" cutoff -- but reads it off the precomputed timeline instead of replaying history.
+    """
+    result = timeline[0][1]
+    for week_key, snapshot in timeline[1:]:
+        if week_key >= before:
+            break
+        result = snapshot
+    return result
+
+
 def sync_ratings(conn, updated_at: str) -> None:
     ratings = recompute_ratings(conn)
     for team_id, rating in ratings.items():

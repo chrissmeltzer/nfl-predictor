@@ -309,6 +309,15 @@ def epa_split_form(
 def strength_of_schedule(
     conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> dict:
+    """Average of each recent opponent's own offensive EPA form (their last `window` games,
+    as of the same `before` cutoff) -- an opponent faced twice counts twice, matching how many
+    times they actually show up in the schedule.
+
+    Each opponent's form here is one number (their own windowed EPA average), so it's fetched
+    for every distinct opponent in a single batched query -- keyed by team_id, with a window
+    function picking each one's own last `window` team_game_stats rows -- rather than calling
+    epa_form() once per opponent, which would be up to `window` extra round trips.
+    """
     clause, clause_params = _before_season_week_clause("g", before)
     opponent_rows = conn.execute(
         f"""
@@ -323,12 +332,32 @@ def strength_of_schedule(
     if not opponent_rows:
         return {"opponent_epa_avg": None}
 
-    epa_values = []
-    for row in opponent_rows:
-        opponent_form = epa_form(conn, row["opponent_id"], window, before)
-        if opponent_form["epa_offense_avg"] is not None:
-            epa_values.append(opponent_form["epa_offense_avg"])
+    opponent_ids = [row["opponent_id"] for row in opponent_rows]
+    stats_clause, stats_params = _before_season_week_clause("tgs", before)
+    # Raw rows, not a SQL-side AVG(): epa_form() averages in Python (sum(values) / len(values)),
+    # and matching that exactly -- rather than Postgres's own float aggregation -- keeps this
+    # batched query's result bit-identical to calling epa_form() once per opponent.
+    ranked_rows = conn.execute(
+        f"""
+        WITH ranked AS (
+            SELECT tgs.team_id, tgs.epa_offense,
+                   ROW_NUMBER() OVER (PARTITION BY tgs.team_id ORDER BY tgs.season DESC, tgs.week DESC) AS rn
+            FROM team_game_stats tgs
+            WHERE tgs.team_id = ANY(%s){stats_clause}
+        )
+        SELECT team_id, epa_offense FROM ranked WHERE rn <= %s
+        """,
+        [opponent_ids, *stats_params, window],
+    ).fetchall()
+    values_by_opponent: dict[str, list[float]] = {}
+    for row in ranked_rows:
+        if row["epa_offense"] is not None:
+            values_by_opponent.setdefault(row["team_id"], []).append(row["epa_offense"])
+    avg_epa_by_opponent = {
+        team_id: sum(values) / len(values) for team_id, values in values_by_opponent.items()
+    }
 
+    epa_values = [avg_epa_by_opponent[oid] for oid in opponent_ids if oid in avg_epa_by_opponent]
     if not epa_values:
         return {"opponent_epa_avg": None}
     return {"opponent_epa_avg": sum(epa_values) / len(epa_values)}

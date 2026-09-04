@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from app import betting, db, predict, stats, sync
+from app import betting, db, elo, predict, stats, sync
 from app.config import DATABASE_URL, STALENESS_HOURS, WEIGHTS_PATH
 from app.reference import DEFAULT_TEAM_COLOR, TEAM_COLORS, injury_impact, parse_kickoff
 from app.sources import espn
@@ -379,7 +379,11 @@ def _week_matchups(conn, season: int, week: int) -> tuple[list[dict], dict]:
     ).fetchall()
     teams = {row["id"]: row for row in db.get_all_teams(conn)}
     weights = predict.load_weights(WEIGHTS_PATH)
-    matchups = [_game_view(conn, game, teams, predict.predict_game(conn, weights, game)) for game in games]
+    ratings_timeline = elo.rating_timeline(conn)
+    matchups = [
+        _game_view(conn, game, teams, predict.predict_game(conn, weights, game, ratings_timeline))
+        for game in games
+    ]
     return matchups, teams
 
 
@@ -450,8 +454,10 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
     ).fetchall()
     teams = {row["id"]: row for row in db.get_all_teams(conn)}
     weights = predict.load_weights(WEIGHTS_PATH)
+    ratings_timeline = elo.rating_timeline(conn)
     schedule_rows = [
-        _game_view(conn, game, teams, predict.predict_game(conn, weights, game), team_id) for game in games
+        _game_view(conn, game, teams, predict.predict_game(conn, weights, game, ratings_timeline), team_id)
+        for game in games
     ]
     upcoming = [row for row in schedule_rows if row["game"]["status"] != "final"]
     remaining_sos = stats.remaining_strength_of_schedule(conn, current_season).get(team_id)

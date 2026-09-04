@@ -167,7 +167,9 @@ def _pass_protection_adjustment(
     return -weight * _clamp(extra_sacks * POINTS_PER_SACK, -5, 5)
 
 
-def _team_ratings(conn, game: dict, home_id: str, away_id: str) -> dict[str, float]:
+def _team_ratings(
+    conn, game: dict, home_id: str, away_id: str, ratings_timeline: list | None = None
+) -> dict[str, float]:
     """Elo ratings for both teams, as they stood at kickoff of `game`.
 
     For an upcoming game, that's simply the persisted current ratings -- every finalized
@@ -175,9 +177,19 @@ def _team_ratings(conn, game: dict, home_id: str, away_id: str) -> dict[str, flo
     we're backtesting/calibrating against it), the persisted ratings reflect *all* finalized
     games including this one and every one after it, so they're replayed fresh up to (but
     not including) this game instead, to avoid leaking future results into its own prediction.
+
+    A caller predicting many games at once (e.g. a team's full schedule) can pass a
+    `ratings_timeline` built once via elo.rating_timeline(), so each final game's ratings come
+    from a single precomputed replay instead of predict_game() triggering its own full replay
+    per game.
     """
     if game["status"] == "final":
-        computed = elo.recompute_ratings(conn, before=(game["season"], game["week"]))
+        before = (game["season"], game["week"])
+        computed = (
+            elo.ratings_before(ratings_timeline, before)
+            if ratings_timeline is not None
+            else elo.recompute_ratings(conn, before=before)
+        )
         return {home_id: computed[home_id], away_id: computed[away_id]}
     return {home_id: stats.get_team_rating(conn, home_id), away_id: stats.get_team_rating(conn, away_id)}
 
@@ -276,7 +288,7 @@ def _prediction_confidence(home_season_games: int, away_season_games: int, windo
     return score, label
 
 
-def predict_game(conn, weights: dict, game: dict) -> dict:
+def predict_game(conn, weights: dict, game: dict, ratings_timeline: list | None = None) -> dict:
     window = weights.get("recent_games_window", 8)
     home_id, away_id = game["home_team_id"], game["away_team_id"]
     # Every historical lookup below is cut off at this game's own kickoff, so backtesting an
@@ -285,7 +297,7 @@ def predict_game(conn, weights: dict, game: dict) -> dict:
     # final, so they're already all before it.
     before_kickoff = game["kickoff_at"]
     before_season_week = (game["season"], game["week"])
-    ratings = _team_ratings(conn, game, home_id, away_id)
+    ratings = _team_ratings(conn, game, home_id, away_id, ratings_timeline)
 
     home_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = %s", (home_id,)).fetchone()
     away_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = %s", (away_id,)).fetchone()

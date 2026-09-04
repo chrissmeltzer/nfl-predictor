@@ -1,4 +1,4 @@
-from app import db, predict
+from app import db, elo, predict
 
 WEIGHTS = {
     "recent_scoring_trend": 1.0,
@@ -270,6 +270,23 @@ def test_predict_game_backtest_ignores_finalized_games_that_happened_later(pg_db
 
     assert result_limited["predicted_home_score"] == result_full["predicted_home_score"]
     assert result_limited["predicted_away_score"] == result_full["predicted_away_score"]
+
+
+def test_predict_game_with_precomputed_ratings_timeline_matches_without_it(pg_url):
+    """A page rendering many games (e.g. a team's full schedule) passes a ratings_timeline it
+    built once via elo.rating_timeline(), instead of letting each predict_game() call replay
+    the whole season's Elo history on its own. The prediction must come out identical either way."""
+    conn = make_conn(pg_url)
+    seed_game(conn, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
+    seed_game(conn, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
+    conn.commit()
+    game = conn.execute("SELECT * FROM games WHERE id = 'target'").fetchone()
+
+    result_without_timeline = predict.predict_game(conn, WEIGHTS, game)
+    timeline = elo.rating_timeline(conn)
+    result_with_timeline = predict.predict_game(conn, WEIGHTS, game, ratings_timeline=timeline)
+
+    assert result_with_timeline == result_without_timeline
 
 
 def test_save_prediction_persists_row(pg_url):

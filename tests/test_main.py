@@ -56,7 +56,7 @@ def test_game_detail_page_shows_breakdown_and_saves_prediction(pg_url, monkeypat
 
 
 def _canned_prediction(upset_alert: bool):
-    return lambda conn, weights, game: {
+    return lambda conn, weights, game, ratings_timeline=None: {
         "predicted_home_score": 17.0, "predicted_away_score": 24.0,
         "confidence_score": 50, "confidence_label": "Moderate",
         "breakdown": {"home": {}, "away": {}}, "upset_alert": upset_alert,
@@ -351,7 +351,7 @@ def test_accuracy_computes_mean_errors_correctly(pg_url, monkeypatch):
 
 
 def _canned_prediction_with_confidence(home_score, away_score, confidence_label):
-    return lambda conn, weights, game: {
+    return lambda conn, weights, game, ratings_timeline=None: {
         "predicted_home_score": home_score, "predicted_away_score": away_score,
         "confidence_score": 80, "confidence_label": confidence_label,
         "breakdown": {"home": {}, "away": {}}, "upset_alert": False,
