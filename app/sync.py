@@ -80,7 +80,7 @@ def sync_weather_for_upcoming(conn, client: httpx.Client) -> None:
         target_time = datetime.fromisoformat(row["kickoff_at"].replace("Z", "+00:00"))
         try:
             forecast = weather.fetch_forecast(client, row["lat"], row["lon"], target_time)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, ValueError):
             logger.warning("Skipping weather for game %s: fetch failed", row["id"])
             continue
         db.upsert_weather(conn, row["id"], forecast, _now_iso())

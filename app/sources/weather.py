@@ -7,15 +7,24 @@ import httpx
 BASE_URL = "https://api.open-meteo.com/v1/forecast"
 
 
-def _closest_hour_index(times: list[str], target: datetime) -> int:
+def _closest_hour_index(times: list[str], target: datetime, valid: list[bool]) -> int:
+    candidates = [i for i, ok in enumerate(valid) if ok]
+    if not candidates:
+        raise ValueError("no hourly forecast data available")
     target_naive = target.replace(tzinfo=None)
-    diffs = [abs((datetime.fromisoformat(t) - target_naive).total_seconds()) for t in times]
-    return diffs.index(min(diffs))
+    return min(
+        candidates,
+        key=lambda i: abs((datetime.fromisoformat(times[i]) - target_naive).total_seconds()),
+    )
 
 
 def parse_forecast(raw: dict, target_time: datetime) -> dict:
+    # Open-Meteo returns null values for the trailing hours of a forecast run,
+    # before that model data has been computed -- exclude those hours so the
+    # closest-hour lookup doesn't land on missing data.
     hourly = raw["hourly"]
-    idx = _closest_hour_index(hourly["time"], target_time)
+    valid = [t is not None for t in hourly["temperature_2m"]]
+    idx = _closest_hour_index(hourly["time"], target_time, valid)
     temp_c = hourly["temperature_2m"][idx]
     wind_kmh = hourly["windspeed_10m"][idx]
     return {
