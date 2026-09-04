@@ -289,3 +289,40 @@ def test_strength_of_schedule_ignores_opponent_games_after_cutoff(tmp_path):
 
     result = stats.strength_of_schedule(conn, "A", window=8, before=(2026, 2))
     assert result["opponent_epa_avg"] == 0.2
+
+
+def test_remaining_strength_of_schedule_ranks_easiest_first(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})
+    db.upsert_team(conn, {"id": "E", "name": "Team E", "abbreviation": "E"})
+    db.upsert_team(conn, {"id": "F", "name": "Team F", "abbreviation": "F"})
+
+    # A goes 1-0 (win_pct 1.0), B goes 0-1 (win_pct 0.0), C ties (win_pct 0.5).
+    seed_game(conn, "g_a", "A", "F", 20, 10, "2026-09-01T00:00Z")
+    seed_game(conn, "g_b", "B", "F", 10, 20, "2026-09-01T00:00Z")
+    seed_game(conn, "g_c", "C", "F", 15, 15, "2026-09-01T00:00Z")
+
+    # D's remaining schedule is A and B (avg opponent win_pct 0.5) — easier than E's.
+    seed_game(conn, "g_d1", "D", "A", None, None, "2026-09-15T00:00Z", status="scheduled")
+    seed_game(conn, "g_d2", "D", "B", None, None, "2026-09-22T00:00Z", status="scheduled")
+    # E's remaining schedule is just A (avg opponent win_pct 1.0) — the toughest.
+    seed_game(conn, "g_e1", "E", "A", None, None, "2026-09-15T00:00Z", status="scheduled")
+    conn.commit()
+
+    result = stats.remaining_strength_of_schedule(conn, season=2026)
+
+    assert result["D"] == {"opponent_win_pct": 0.5, "rank": 1, "teams_ranked": 2}
+    assert result["E"] == {"opponent_win_pct": 1.0, "rank": 2, "teams_ranked": 2}
+    assert "A" not in result  # A has no remaining games of its own this season
+
+
+def test_remaining_strength_of_schedule_excludes_team_with_no_opponent_data(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})
+    db.upsert_team(conn, {"id": "E", "name": "Team E", "abbreviation": "E"})
+    seed_game(conn, "g_de", "D", "E", None, None, "2026-09-15T00:00Z", status="scheduled")
+    conn.commit()
+
+    result = stats.remaining_strength_of_schedule(conn, season=2026)
+
+    assert result == {}

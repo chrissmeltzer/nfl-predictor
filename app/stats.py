@@ -335,6 +335,59 @@ def strength_of_schedule(
     return {"opponent_epa_avg": sum(epa_values) / len(epa_values)}
 
 
+def _season_win_pct(conn: sqlite3.Connection, team_id: str, season: int) -> float | None:
+    games = conn.execute(
+        "SELECT home_team_id, home_score, away_score FROM games "
+        "WHERE season = ? AND status = 'final' AND (home_team_id = ? OR away_team_id = ?)",
+        (season, team_id, team_id),
+    ).fetchall()
+    if not games:
+        return None
+    wins = losses = ties = 0
+    for g in games:
+        team_score = g["home_score"] if g["home_team_id"] == team_id else g["away_score"]
+        opponent_score = g["away_score"] if g["home_team_id"] == team_id else g["home_score"]
+        if team_score > opponent_score:
+            wins += 1
+        elif team_score < opponent_score:
+            losses += 1
+        else:
+            ties += 1
+    return (wins + 0.5 * ties) / (wins + losses + ties)
+
+
+def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dict[str, dict]:
+    """Ranks every team by the average win % of its remaining (unplayed) opponents this
+    season. Rank 1 is the easiest remaining schedule. Teams with no remaining games, or
+    whose remaining opponents haven't played yet, are omitted."""
+    team_ids = [row["id"] for row in conn.execute("SELECT id FROM teams").fetchall()]
+    win_pct = {team_id: _season_win_pct(conn, team_id, season) for team_id in team_ids}
+
+    remaining_games = conn.execute(
+        "SELECT home_team_id, away_team_id FROM games WHERE season = ? AND status != 'final'",
+        (season,),
+    ).fetchall()
+    remaining_opponents: dict[str, list[str]] = {team_id: [] for team_id in team_ids}
+    for g in remaining_games:
+        if g["home_team_id"] in remaining_opponents:
+            remaining_opponents[g["home_team_id"]].append(g["away_team_id"])
+        if g["away_team_id"] in remaining_opponents:
+            remaining_opponents[g["away_team_id"]].append(g["home_team_id"])
+
+    averages = {}
+    for team_id, opponent_ids in remaining_opponents.items():
+        known_pcts = [win_pct[o] for o in opponent_ids if win_pct.get(o) is not None]
+        if known_pcts:
+            averages[team_id] = sum(known_pcts) / len(known_pcts)
+
+    ranked = sorted(averages.items(), key=lambda kv: kv[1])
+    teams_ranked = len(ranked)
+    return {
+        team_id: {"opponent_win_pct": pct, "rank": i, "teams_ranked": teams_ranked}
+        for i, (team_id, pct) in enumerate(ranked, start=1)
+    }
+
+
 def get_team_rating(conn: sqlite3.Connection, team_id: str, default: float = 1500.0) -> float:
     row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = ?", (team_id,)).fetchone()
     return row["elo_rating"] if row else default
