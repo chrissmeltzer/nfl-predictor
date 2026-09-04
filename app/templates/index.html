@@ -99,13 +99,11 @@
         <form method="post" action="/games/{{ matchup.game.id }}/pick">
           <input type="hidden" name="team_id" value="{{ matchup.away.id }}">
           <input type="hidden" name="week" value="{{ week }}">
-          <input type="hidden" name="return_to" value="index">
           <button type="submit" class="pick-btn{{ ' pick-btn-active' if matchup.player_pick_team_id == matchup.away.id else '' }}">{{ matchup.away.abbreviation }}</button>
         </form>
         <form method="post" action="/games/{{ matchup.game.id }}/pick">
           <input type="hidden" name="team_id" value="{{ matchup.home.id }}">
           <input type="hidden" name="week" value="{{ week }}">
-          <input type="hidden" name="return_to" value="index">
           <button type="submit" class="pick-btn{{ ' pick-btn-active' if matchup.player_pick_team_id == matchup.home.id else '' }}">{{ matchup.home.abbreviation }}</button>
         </form>
       </div>
