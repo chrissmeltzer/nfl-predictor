@@ -1,20 +1,20 @@
 from app.db import get_connection, init_db
 
 
-def test_init_db_creates_all_tables(tmp_path):
-    db_path = tmp_path / "test.db"
-    conn = get_connection(db_path)
+def test_init_db_creates_all_tables(pg_url):
+    conn = get_connection(pg_url)
     init_db(conn)
 
     tables = {
-        row["name"]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        row["table_name"]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        )
     }
     assert {"teams", "games", "weather_forecasts", "injuries", "predictions"} <= tables
 
 
-def test_init_db_is_idempotent(tmp_path):
-    db_path = tmp_path / "test.db"
-    conn = get_connection(db_path)
+def test_init_db_is_idempotent(pg_url):
+    conn = get_connection(pg_url)
     init_db(conn)
     init_db(conn)  # should not raise
