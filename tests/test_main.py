@@ -45,35 +45,6 @@ def test_schedule_page_lists_games_for_current_week(tmp_path, monkeypatch):
     assert "Team B" in response.text
 
 
-def test_schedule_page_sorts_by_confidence_when_requested(tmp_path, monkeypatch):
-    client = make_test_client(tmp_path, monkeypatch)
-    conn = db.get_connection(tmp_path / "test.db")
-    db.upsert_team(conn, {"id": "C", "name": "Team C", "abbreviation": "C"})
-    db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})
-    db.upsert_game(conn, {
-        "id": "g2", "season": 2026, "week": 1, "home_team_id": "C", "away_team_id": "D",
-        "kickoff_at": "2026-09-10T04:20Z", "venue_name": "Y", "is_outdoor": False,
-        "lat": None, "lon": None, "status": "scheduled", "home_score": None, "away_score": None,
-    })
-    conn.commit()
-    conn.close()
-
-    def fake_predict(conn, weights, game):
-        confidence = 90 if game["id"] == "g1" else 30
-        return {
-            "predicted_home_score": 24.0, "predicted_away_score": 17.0,
-            "confidence_score": confidence, "confidence_label": "High" if confidence == 90 else "Low",
-            "breakdown": {"home": {}, "away": {}}, "upset_alert": False,
-        }
-
-    monkeypatch.setattr(main.predict, "predict_game", fake_predict)
-
-    response = client.get("/?sort=confidence")
-
-    assert response.status_code == 200
-    assert response.text.index('href="/games/g2"') < response.text.index('href="/games/g1"')
-
-
 def test_game_detail_page_shows_breakdown_and_saves_prediction(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     response = client.get("/games/g1")

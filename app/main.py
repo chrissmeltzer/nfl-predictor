@@ -318,7 +318,7 @@ def trigger_sync(conn=Depends(get_db)):
 
 
 @app.get("/", response_class=HTMLResponse)
-def schedule(request: Request, week: int | None = None, sort: str | None = None, conn=Depends(get_db)):
+def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         season, current_week = espn.fetch_current_week(client)
         if _is_stale(conn):
@@ -333,14 +333,18 @@ def schedule(request: Request, week: int | None = None, sort: str | None = None,
 
     weights = predict.load_weights(WEIGHTS_PATH)
     matchups = [_game_view(conn, game, teams, predict.predict_game(conn, weights, game)) for game in games]
-    if sort == "confidence":
-        matchups.sort(key=lambda m: m["confidence_score"] if m["confidence_score"] is not None else 0)
+
+    player = _current_player(request, conn)
+    picks = db.get_player_picks_for_games(conn, player["id"], [g["id"] for g in games]) if player else {}
+    for matchup in matchups:
+        matchup["player_pick_team_id"] = picks.get(matchup["game"]["id"])
+        matchup["pick_locked"] = _pick_locked(matchup["game"])
 
     return templates.TemplateResponse(
         request,
         "index.html",
         _template_context(
-            request, conn, matchups=matchups, teams=list(teams.values()), week=week, season=season, sort=sort
+            request, conn, matchups=matchups, teams=list(teams.values()), week=week, season=season
         ),
     )
 
@@ -580,11 +584,28 @@ def join_submit(request: Request, name: str = Form(...), next: str = Form("/"), 
     return response
 
 
+def _pick_redirect_url(return_to: str, week: int, game_id: str, error: str | None = None) -> str:
+    query = f"week={week}" + (f"&pick_error={error}" if error else "")
+    if return_to == "index":
+        return f"/?{query}#game-{game_id}"
+    return f"/pickem?{query}"
+
+
 @app.post("/games/{game_id}/pick")
-def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: int = Form(...), conn=Depends(get_db)):
+def submit_pick(
+    request: Request,
+    game_id: str,
+    team_id: str = Form(...),
+    week: int = Form(...),
+    return_to: str = Form("pickem"),
+    conn=Depends(get_db),
+):
+    return_to = return_to if return_to == "index" else "pickem"
+
     player = _current_player(request, conn)
     if player is None:
-        return RedirectResponse(url=f"/join?next={quote(f'/pickem?week={week}', safe='')}", status_code=303)
+        next_url = _pick_redirect_url(return_to, week, game_id)
+        return RedirectResponse(url=f"/join?next={quote(next_url, safe='')}", status_code=303)
 
     game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
     if game is None:
@@ -594,11 +615,11 @@ def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: 
         raise HTTPException(status_code=400)
 
     if _pick_locked(game):
-        return RedirectResponse(url=f"/pickem?week={week}&pick_error=locked", status_code=303)
+        return RedirectResponse(url=_pick_redirect_url(return_to, week, game_id, error="locked"), status_code=303)
 
     db.upsert_pick(conn, player["id"], game_id, team_id, datetime.now(timezone.utc).isoformat())
     conn.commit()
-    return RedirectResponse(url=f"/pickem?week={week}", status_code=303)
+    return RedirectResponse(url=_pick_redirect_url(return_to, week, game_id), status_code=303)
 
 
 def _pick_outcome(row) -> str:
