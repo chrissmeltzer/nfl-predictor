@@ -117,14 +117,14 @@ def _team_color(team) -> str:
     return TEAM_COLORS.get(team["abbreviation"], DEFAULT_TEAM_COLOR)
 
 
-_KICKOFF_DISPLAY_TZ = ZoneInfo("America/New_York")
+_KICKOFF_DISPLAY_TZ = ZoneInfo("America/Phoenix")
 
 
 def _format_kickoff(value: str | None) -> str:
     if not value:
         return "Kickoff TBD"
     try:
-        return parse_kickoff(value).astimezone(_KICKOFF_DISPLAY_TZ).strftime("%a, %b %-d · %-I:%M %p ET")
+        return parse_kickoff(value).astimezone(_KICKOFF_DISPLAY_TZ).strftime("%a, %b %-d · %-I:%M %p %Z")
     except ValueError:
         return value
 
