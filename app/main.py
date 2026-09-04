@@ -584,11 +584,9 @@ def join_submit(request: Request, name: str = Form(...), next: str = Form("/"), 
     return response
 
 
-def _pick_redirect_url(return_to: str, week: int, game_id: str, error: str | None = None) -> str:
+def _pick_redirect_url(week: int, game_id: str, error: str | None = None) -> str:
     query = f"week={week}" + (f"&pick_error={error}" if error else "")
-    if return_to == "index":
-        return f"/?{query}#game-{game_id}"
-    return f"/pickem?{query}"
+    return f"/?{query}#game-{game_id}"
 
 
 @app.post("/games/{game_id}/pick")
@@ -597,14 +595,11 @@ def submit_pick(
     game_id: str,
     team_id: str = Form(...),
     week: int = Form(...),
-    return_to: str = Form("pickem"),
     conn=Depends(get_db),
 ):
-    return_to = return_to if return_to == "index" else "pickem"
-
     player = _current_player(request, conn)
     if player is None:
-        next_url = _pick_redirect_url(return_to, week, game_id)
+        next_url = _pick_redirect_url(week, game_id)
         return RedirectResponse(url=f"/join?next={quote(next_url, safe='')}", status_code=303)
 
     game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
@@ -615,11 +610,11 @@ def submit_pick(
         raise HTTPException(status_code=400)
 
     if _pick_locked(game):
-        return RedirectResponse(url=_pick_redirect_url(return_to, week, game_id, error="locked"), status_code=303)
+        return RedirectResponse(url=_pick_redirect_url(week, game_id, error="locked"), status_code=303)
 
     db.upsert_pick(conn, player["id"], game_id, team_id, datetime.now(timezone.utc).isoformat())
     conn.commit()
-    return RedirectResponse(url=_pick_redirect_url(return_to, week, game_id), status_code=303)
+    return RedirectResponse(url=_pick_redirect_url(week, game_id), status_code=303)
 
 
 def _pick_outcome(row) -> str:
@@ -687,39 +682,12 @@ def _build_weekly_breakdown(players, decided_picks) -> list[dict]:
     return breakdown
 
 
-def _pick_view(conn, game, teams, player_pick_team_id: str | None) -> dict:
-    home = teams[game["home_team_id"]]
-    away = teams[game["away_team_id"]]
-    return {
-        "game": game,
-        "home": home,
-        "away": away,
-        "home_logo": _logo_url(home),
-        "away_logo": _logo_url(away),
-        "kickoff": _format_kickoff(game["kickoff_at"]),
-        "actual_winner_team_id": _actual_winner_team_id(game),
-        "player_pick_team_id": player_pick_team_id,
-        "pick_locked": _pick_locked(game),
-    }
-
-
 @app.get("/pickem", response_class=HTMLResponse)
-def pickem_page(request: Request, week: int | None = None, conn=Depends(get_db)):
+def pickem_page(request: Request, conn=Depends(get_db)):
     with httpx.Client(timeout=30, follow_redirects=True) as client:
-        season, current_week = espn.fetch_current_week(client)
+        season, _ = espn.fetch_current_week(client)
         if _is_stale(conn):
             sync.sync_all(conn, client, current_season=season)
-
-    week = week or current_week
-    games = conn.execute(
-        "SELECT * FROM games WHERE season = ? AND week = ? ORDER BY kickoff_at",
-        (season, week),
-    ).fetchall()
-    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
-
-    player = _current_player(request, conn)
-    picks = db.get_player_picks_for_games(conn, player["id"], [g["id"] for g in games]) if player else {}
-    matchups = [_pick_view(conn, game, teams, picks.get(game["id"])) for game in games]
 
     players = db.get_all_players(conn)
     decided_picks = db.get_decided_picks(conn)
@@ -729,7 +697,5 @@ def pickem_page(request: Request, week: int | None = None, conn=Depends(get_db))
     return templates.TemplateResponse(
         request,
         "pickem.html",
-        _template_context(
-            request, conn, matchups=matchups, week=week, season=season, standings=standings, weekly=weekly
-        ),
+        _template_context(request, conn, standings=standings, weekly=weekly),
     )
