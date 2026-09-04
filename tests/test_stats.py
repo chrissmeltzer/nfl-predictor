@@ -9,8 +9,8 @@ def seed_game(conn, game_id, home_id, away_id, home_score, away_score, kickoff_a
     })
 
 
-def make_conn(tmp_path):
-    conn = db.get_connection(tmp_path / "test.db")
+def make_conn(dsn):
+    conn = db.get_connection(dsn)
     db.init_db(conn)
     db.upsert_team(conn, {"id": "A", "name": "Team A", "abbreviation": "A"})
     db.upsert_team(conn, {"id": "B", "name": "Team B", "abbreviation": "B"})
@@ -19,8 +19,8 @@ def make_conn(tmp_path):
     return conn
 
 
-def test_recent_scoring_stats_averages_last_n_games(tmp_path):
-    conn = make_conn(tmp_path)
+def test_recent_scoring_stats_averages_last_n_games(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 10, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "B", "A", 14, 30, "2026-09-08T00:00Z")
     conn.commit()
@@ -31,8 +31,8 @@ def test_recent_scoring_stats_averages_last_n_games(tmp_path):
     assert result["games_counted"] == 2
 
 
-def test_recent_scoring_stats_respects_window(tmp_path):
-    conn = make_conn(tmp_path)
+def test_recent_scoring_stats_respects_window(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 100, 0, "2026-08-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 10, 0, "2026-09-01T00:00Z")
     conn.commit()
@@ -42,8 +42,8 @@ def test_recent_scoring_stats_respects_window(tmp_path):
     assert result["games_counted"] == 1
 
 
-def test_recent_scoring_stats_window_zero_returns_no_games(tmp_path):
-    conn = make_conn(tmp_path)
+def test_recent_scoring_stats_window_zero_returns_no_games(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 10, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "B", "A", 14, 30, "2026-09-08T00:00Z")
     conn.commit()
@@ -54,8 +54,8 @@ def test_recent_scoring_stats_window_zero_returns_no_games(tmp_path):
     assert result["games_counted"] == 0
 
 
-def test_home_away_split(tmp_path):
-    conn = make_conn(tmp_path)
+def test_home_away_split(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 30, 10, "2026-09-01T00:00Z")  # A home
     seed_game(conn, "g2", "B", "A", 10, 10, "2026-09-08T00:00Z")  # A away
     conn.commit()
@@ -66,8 +66,8 @@ def test_home_away_split(tmp_path):
     assert result["overall_avg"] == 20
 
 
-def test_head_to_head_only_counts_matchups_between_the_two_teams(tmp_path):
-    conn = make_conn(tmp_path)
+def test_head_to_head_only_counts_matchups_between_the_two_teams(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 21, 17, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "C", 40, 3, "2026-09-08T00:00Z")
     conn.commit()
@@ -77,8 +77,8 @@ def test_head_to_head_only_counts_matchups_between_the_two_teams(tmp_path):
     assert result["avg_points_scored"] == 21
 
 
-def test_rest_days_computed_from_previous_game(tmp_path):
-    conn = make_conn(tmp_path)
+def test_rest_days_computed_from_previous_game(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 21, 17, "2026-09-01T00:00Z")
     conn.commit()
 
@@ -86,8 +86,8 @@ def test_rest_days_computed_from_previous_game(tmp_path):
     assert days == 7
 
 
-def test_recent_scoring_stats_ignores_games_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_recent_scoring_stats_ignores_games_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 10, 0, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 100, 0, "2026-10-01T00:00Z")
     conn.commit()
@@ -97,8 +97,8 @@ def test_recent_scoring_stats_ignores_games_after_cutoff(tmp_path):
     assert result["games_counted"] == 1
 
 
-def test_recency_weighted_scoring_ignores_games_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_recency_weighted_scoring_ignores_games_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 10, 0, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 100, 0, "2026-10-01T00:00Z")
     conn.commit()
@@ -107,8 +107,8 @@ def test_recency_weighted_scoring_ignores_games_after_cutoff(tmp_path):
     assert result["avg_points_scored"] == 10
 
 
-def test_home_away_split_ignores_games_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_home_away_split_ignores_games_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 30, 10, "2026-09-01T00:00Z")  # A home
     seed_game(conn, "g2", "B", "A", 5, 5, "2026-10-01T00:00Z")  # after cutoff, A away
 
@@ -119,8 +119,8 @@ def test_home_away_split_ignores_games_after_cutoff(tmp_path):
     assert result["away_avg"] == 30  # no away games before cutoff -> falls back to overall_avg
 
 
-def test_head_to_head_ignores_meetings_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_head_to_head_ignores_meetings_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 21, 17, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 100, 0, "2026-10-01T00:00Z")
     conn.commit()
@@ -130,8 +130,8 @@ def test_head_to_head_ignores_meetings_after_cutoff(tmp_path):
     assert result["avg_points_scored"] == 21
 
 
-def test_current_season_sample_size_ignores_games_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_current_season_sample_size_ignores_games_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     for i in range(8):
         seed_game(conn, f"g{i}", "A", "B", 20, 10, f"2026-09-{i + 1:02d}T00:00Z")
     conn.commit()
@@ -148,8 +148,8 @@ def seed_team_game_stat(conn, team_id, season, week, sacks_suffered, pass_attemp
     })
 
 
-def test_pass_rush_form_computes_protection_and_pressure_rates(tmp_path):
-    conn = make_conn(tmp_path)
+def test_pass_rush_form_computes_protection_and_pressure_rates(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
     seed_team_game_stat(conn, "A", 2026, 1, sacks_suffered=2, pass_attempts=30, def_sacks=1)
     seed_team_game_stat(conn, "B", 2026, 1, sacks_suffered=1, pass_attempts=28, def_sacks=3)
@@ -160,16 +160,16 @@ def test_pass_rush_form_computes_protection_and_pressure_rates(tmp_path):
     assert result["pressure_rate"] == 1 / 29
 
 
-def test_pass_rush_form_returns_none_when_no_data(tmp_path):
-    conn = make_conn(tmp_path)
+def test_pass_rush_form_returns_none_when_no_data(pg_url):
+    conn = make_conn(pg_url)
 
     result = stats.pass_rush_form(conn, "A", window=8)
     assert result["protection_rate"] is None
     assert result["pressure_rate"] is None
 
 
-def test_pass_rush_form_ignores_stats_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_pass_rush_form_ignores_stats_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
     seed_team_game_stat(conn, "A", 2026, 1, sacks_suffered=2, pass_attempts=30, def_sacks=1)
     seed_team_game_stat(conn, "B", 2026, 1, sacks_suffered=1, pass_attempts=28, def_sacks=3)
@@ -184,8 +184,8 @@ def test_pass_rush_form_ignores_stats_after_cutoff(tmp_path):
     assert result["pressure_rate"] == 1 / 29
 
 
-def test_turnover_form_ignores_stats_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_turnover_form_ignores_stats_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     db.upsert_team_game_stat(conn, {
         "team_id": "A", "season": 2026, "week": 1, "turnovers": 1,
         "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": None,
@@ -202,8 +202,8 @@ def test_turnover_form_ignores_stats_after_cutoff(tmp_path):
     assert result["avg_turnovers_committed"] == 1
 
 
-def test_turnovers_forced_ignores_stats_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_turnovers_forced_ignores_stats_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
     db.upsert_team_game_stat(conn, {
@@ -222,8 +222,8 @@ def test_turnovers_forced_ignores_stats_after_cutoff(tmp_path):
     assert result["avg_turnovers_forced"] == 2
 
 
-def test_epa_form_ignores_stats_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_epa_form_ignores_stats_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
     db.upsert_team_game_stat(conn, {
@@ -253,8 +253,8 @@ def test_epa_form_ignores_stats_after_cutoff(tmp_path):
     assert result["epa_allowed_avg"] == -0.2
 
 
-def test_pace_form_ignores_stats_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_pace_form_ignores_stats_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     db.upsert_team_game_stat(conn, {
         "team_id": "A", "season": 2026, "week": 1, "turnovers": 0,
         "epa_offense": None, "epa_passing": None, "epa_rushing": None, "plays": 60,
@@ -271,8 +271,8 @@ def test_pace_form_ignores_stats_after_cutoff(tmp_path):
     assert result == 60
 
 
-def test_strength_of_schedule_ignores_opponent_games_after_cutoff(tmp_path):
-    conn = make_conn(tmp_path)
+def test_strength_of_schedule_ignores_opponent_games_after_cutoff(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 17, "2026-09-01T00:00Z")
     seed_game(conn, "g2", "A", "B", 10, 10, "2026-09-08T00:00Z")
     db.upsert_team_game_stat(conn, {
@@ -291,8 +291,8 @@ def test_strength_of_schedule_ignores_opponent_games_after_cutoff(tmp_path):
     assert result["opponent_epa_avg"] == 0.2
 
 
-def test_remaining_strength_of_schedule_ranks_easiest_first(tmp_path):
-    conn = make_conn(tmp_path)
+def test_remaining_strength_of_schedule_ranks_easiest_first(pg_url):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})
     db.upsert_team(conn, {"id": "E", "name": "Team E", "abbreviation": "E"})
     db.upsert_team(conn, {"id": "F", "name": "Team F", "abbreviation": "F"})
@@ -316,8 +316,8 @@ def test_remaining_strength_of_schedule_ranks_easiest_first(tmp_path):
     assert "A" not in result  # A has no remaining games of its own this season
 
 
-def test_remaining_strength_of_schedule_excludes_team_with_no_opponent_data(tmp_path):
-    conn = make_conn(tmp_path)
+def test_remaining_strength_of_schedule_excludes_team_with_no_opponent_data(pg_url):
+    conn = make_conn(pg_url)
     db.upsert_team(conn, {"id": "D", "name": "Team D", "abbreviation": "D"})
     db.upsert_team(conn, {"id": "E", "name": "Team E", "abbreviation": "E"})
     seed_game(conn, "g_de", "D", "E", None, None, "2026-09-15T00:00Z", status="scheduled")
