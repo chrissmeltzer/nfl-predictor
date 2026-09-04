@@ -33,7 +33,7 @@ def recompute_ratings(conn: sqlite3.Connection, before: tuple[int, int] | None =
     params: list = []
     if before is not None:
         season, week = before
-        query += " AND (season < ? OR (season = ? AND week < ?))"
+        query += " AND (season < %s OR (season = %s AND week < %s))"
         params += [season, season, week]
     query += " ORDER BY season ASC, week ASC, kickoff_at ASC, id ASC"
     games = conn.execute(query, params).fetchall()

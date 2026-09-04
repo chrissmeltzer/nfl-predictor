@@ -73,7 +73,7 @@ def _weather_adjustment(weather_row: sqlite3.Row | None, weight: float) -> float
 
 
 def _injuries_adjustment(conn, team_id: str, weight: float) -> float:
-    rows = conn.execute("SELECT position, status FROM injuries WHERE team_id = ?", (team_id,)).fetchall()
+    rows = conn.execute("SELECT position, status FROM injuries WHERE team_id = %s", (team_id,)).fetchall()
     total = 0.0
     for row in rows:
         if not injury_counts_toward_model(row["status"]):
@@ -288,8 +288,8 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     before_season_week = (game["season"], game["week"])
     ratings = _team_ratings(conn, game, home_id, away_id)
 
-    home_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = ?", (home_id,)).fetchone()
-    away_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = ?", (away_id,)).fetchone()
+    home_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = %s", (home_id,)).fetchone()
+    away_abbr_row = conn.execute("SELECT abbreviation FROM teams WHERE id = %s", (away_id,)).fetchone()
     away_abbr = away_abbr_row["abbreviation"] if away_abbr_row else None
 
     home_recent = stats.recent_scoring_stats(conn, home_id, window, before=before_kickoff)
@@ -307,7 +307,7 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     away_split = stats.home_away_split(conn, away_id, before=before_kickoff)
 
     weather_row = conn.execute(
-        "SELECT * FROM weather_forecasts WHERE game_id = ?", (game["id"],)
+        "SELECT * FROM weather_forecasts WHERE game_id = %s", (game["id"],)
     ).fetchone()
 
     breakdown = {"home": {}, "away": {}}
@@ -376,7 +376,7 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
 def get_latest_prediction(conn: sqlite3.Connection, game_id: str) -> dict | None:
     row = conn.execute(
         "SELECT predicted_home_score, predicted_away_score FROM predictions "
-        "WHERE game_id = ? ORDER BY id DESC LIMIT 1",
+        "WHERE game_id = %s ORDER BY id DESC LIMIT 1",
         (game_id,),
     ).fetchone()
     if row is None:
@@ -393,7 +393,7 @@ def save_prediction(conn: sqlite3.Connection, game_id: str, result: dict, weight
         """
         INSERT INTO predictions (game_id, predicted_home_score, predicted_away_score,
                                   factor_breakdown_json, weights_snapshot_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT(game_id) DO UPDATE SET
             predicted_home_score = excluded.predicted_home_score,
             predicted_away_score = excluded.predicted_away_score,

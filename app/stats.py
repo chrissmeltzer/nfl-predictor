@@ -15,11 +15,11 @@ def _team_games(
 ) -> list[sqlite3.Row]:
     query = """
         SELECT * FROM games
-        WHERE status = 'final' AND (home_team_id = ? OR away_team_id = ?)
+        WHERE status = 'final' AND (home_team_id = %s OR away_team_id = %s)
     """
     params = [team_id, team_id]
     if before is not None:
-        query += " AND kickoff_at < ?"
+        query += " AND kickoff_at < %s"
         params.append(before)
     query += " ORDER BY kickoff_at DESC, id DESC"
     if limit is not None:
@@ -124,13 +124,13 @@ def head_to_head(conn: sqlite3.Connection, team_id: str, opponent_id: str, befor
     query = """
         SELECT * FROM games
         WHERE status = 'final' AND (
-            (home_team_id = ? AND away_team_id = ?) OR
-            (home_team_id = ? AND away_team_id = ?)
+            (home_team_id = %s AND away_team_id = %s) OR
+            (home_team_id = %s AND away_team_id = %s)
         )
     """
     params = [team_id, opponent_id, opponent_id, team_id]
     if before is not None:
-        query += " AND kickoff_at < ?"
+        query += " AND kickoff_at < %s"
         params.append(before)
     games = conn.execute(query, params).fetchall()
 
@@ -148,15 +148,15 @@ def head_to_head_games(
     query = """
         SELECT * FROM games
         WHERE status = 'final' AND (
-            (home_team_id = ? AND away_team_id = ?) OR
-            (home_team_id = ? AND away_team_id = ?)
+            (home_team_id = %s AND away_team_id = %s) OR
+            (home_team_id = %s AND away_team_id = %s)
         )
     """
     params = [team_id, opponent_id, opponent_id, team_id]
     if before is not None:
-        query += " AND kickoff_at < ?"
+        query += " AND kickoff_at < %s"
         params.append(before)
-    query += " ORDER BY kickoff_at DESC, id DESC LIMIT ?"
+    query += " ORDER BY kickoff_at DESC, id DESC LIMIT %s"
     params.append(limit)
     games = conn.execute(query, params).fetchall()
 
@@ -178,7 +178,7 @@ def rest_days(conn: sqlite3.Connection, team_id: str, before: str) -> int | None
     row = conn.execute(
         """
         SELECT kickoff_at FROM games
-        WHERE status = 'final' AND (home_team_id = ? OR away_team_id = ?) AND kickoff_at < ?
+        WHERE status = 'final' AND (home_team_id = %s OR away_team_id = %s) AND kickoff_at < %s
         ORDER BY kickoff_at DESC LIMIT 1
         """,
         (team_id, team_id, before),
@@ -195,7 +195,7 @@ def _before_season_week_clause(alias: str, before: tuple[int, int] | None) -> tu
     if before is None:
         return "", []
     season, week = before
-    return f" AND ({alias}.season < ? OR ({alias}.season = ? AND {alias}.week < ?))", [season, season, week]
+    return f" AND ({alias}.season < %s OR ({alias}.season = %s AND {alias}.week < %s))", [season, season, week]
 
 
 def _team_game_stats(
@@ -203,7 +203,7 @@ def _team_game_stats(
 ) -> list[sqlite3.Row]:
     clause, clause_params = _before_season_week_clause("team_game_stats", before)
     return conn.execute(
-        f"SELECT * FROM team_game_stats WHERE team_id = ?{clause} ORDER BY season DESC, week DESC LIMIT ?",
+        f"SELECT * FROM team_game_stats WHERE team_id = %s{clause} ORDER BY season DESC, week DESC LIMIT %s",
         [team_id, *clause_params, window],
     ).fetchall()
 
@@ -228,10 +228,10 @@ def turnovers_forced(
         FROM games g
         JOIN team_game_stats tgs
           ON tgs.season = g.season AND tgs.week = g.week
-         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND tgs.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -253,10 +253,10 @@ def epa_form(conn: sqlite3.Connection, team_id: str, window: int, before: tuple[
         FROM games g
         JOIN team_game_stats tgs
           ON tgs.season = g.season AND tgs.week = g.week
-         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND tgs.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -288,10 +288,10 @@ def epa_split_form(
         FROM games g
         JOIN team_game_stats tgs
           ON tgs.season = g.season AND tgs.week = g.week
-         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND tgs.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -314,11 +314,11 @@ def strength_of_schedule(
     clause, clause_params = _before_season_week_clause("g", before)
     opponent_rows = conn.execute(
         f"""
-        SELECT CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END AS opponent_id
+        SELECT CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END AS opponent_id
         FROM games g
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -342,7 +342,7 @@ def season_records(conn: sqlite3.Connection, season: int) -> dict[str, tuple[int
     """
     games = conn.execute(
         "SELECT home_team_id, away_team_id, home_score, away_score FROM games "
-        "WHERE season = ? AND status = 'final'",
+        "WHERE season = %s AND status = 'final'",
         (season,),
     ).fetchall()
     records: dict[str, list[int]] = {}
@@ -378,7 +378,7 @@ def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dic
     win_pct = {team_id: _win_pct_from_record(records.get(team_id)) for team_id in team_ids}
 
     remaining_games = conn.execute(
-        "SELECT home_team_id, away_team_id FROM games WHERE season = ? AND status != 'final'",
+        "SELECT home_team_id, away_team_id FROM games WHERE season = %s AND status != 'final'",
         (season,),
     ).fetchall()
     remaining_opponents: dict[str, list[str]] = {team_id: [] for team_id in team_ids}
@@ -403,7 +403,7 @@ def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dic
 
 
 def get_team_rating(conn: sqlite3.Connection, team_id: str, default: float = 1500.0) -> float:
-    row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = ?", (team_id,)).fetchone()
+    row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = %s", (team_id,)).fetchone()
     return row["elo_rating"] if row else default
 
 
@@ -430,13 +430,13 @@ def pass_rush_form(
                opp.pass_attempts AS opp_pass_attempts, opp.sacks_suffered AS opp_sacks_suffered
         FROM games g
         JOIN team_game_stats tgs
-          ON tgs.season = g.season AND tgs.week = g.week AND tgs.team_id = ?
+          ON tgs.season = g.season AND tgs.week = g.week AND tgs.team_id = %s
         JOIN team_game_stats opp
           ON opp.season = g.season AND opp.week = g.week
-         AND opp.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND opp.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
