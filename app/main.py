@@ -336,12 +336,6 @@ def schedule(request: Request, week: int | None = None, sort: str | None = None,
     if sort == "confidence":
         matchups.sort(key=lambda m: m["confidence_score"] if m["confidence_score"] is not None else 0)
 
-    player = _current_player(request, conn)
-    picks = db.get_player_picks_for_games(conn, player["id"], [m["game"]["id"] for m in matchups]) if player else {}
-    for matchup in matchups:
-        matchup["player_pick_team_id"] = picks.get(matchup["game"]["id"])
-        matchup["pick_locked"] = _pick_locked(matchup["game"])
-
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -588,7 +582,7 @@ def join_submit(request: Request, name: str = Form(...), next: str = Form("/"), 
 def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: int = Form(...), conn=Depends(get_db)):
     player = _current_player(request, conn)
     if player is None:
-        return RedirectResponse(url=f"/join?next={quote(f'/?week={week}', safe='')}", status_code=303)
+        return RedirectResponse(url=f"/join?next={quote(f'/pickem?week={week}', safe='')}", status_code=303)
 
     game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
     if game is None:
@@ -598,11 +592,11 @@ def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: 
         raise HTTPException(status_code=400)
 
     if _pick_locked(game):
-        return RedirectResponse(url=f"/?week={week}&pick_error=locked", status_code=303)
+        return RedirectResponse(url=f"/pickem?week={week}&pick_error=locked", status_code=303)
 
     db.upsert_pick(conn, player["id"], game_id, team_id, datetime.now(timezone.utc).isoformat())
     conn.commit()
-    return RedirectResponse(url=f"/?week={week}", status_code=303)
+    return RedirectResponse(url=f"/pickem?week={week}", status_code=303)
 
 
 def _pick_outcome(row) -> str:
@@ -670,13 +664,49 @@ def _build_weekly_breakdown(players, decided_picks) -> list[dict]:
     return breakdown
 
 
-@app.get("/leaderboard", response_class=HTMLResponse)
-def leaderboard_page(request: Request, conn=Depends(get_db)):
+def _pick_view(conn, game, teams, player_pick_team_id: str | None) -> dict:
+    home = teams[game["home_team_id"]]
+    away = teams[game["away_team_id"]]
+    return {
+        "game": game,
+        "home": home,
+        "away": away,
+        "home_logo": _logo_url(home),
+        "away_logo": _logo_url(away),
+        "kickoff": _format_kickoff(game["kickoff_at"]),
+        "actual_winner_team_id": _actual_winner_team_id(game),
+        "player_pick_team_id": player_pick_team_id,
+        "pick_locked": _pick_locked(game),
+    }
+
+
+@app.get("/pickem", response_class=HTMLResponse)
+def pickem_page(request: Request, week: int | None = None, conn=Depends(get_db)):
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        season, current_week = espn.fetch_current_week(client)
+        if _is_stale(conn):
+            sync.sync_all(conn, client, current_season=season)
+
+    week = week or current_week
+    games = conn.execute(
+        "SELECT * FROM games WHERE season = ? AND week = ? ORDER BY kickoff_at",
+        (season, week),
+    ).fetchall()
+    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
+
+    player = _current_player(request, conn)
+    picks = db.get_player_picks_for_games(conn, player["id"], [g["id"] for g in games]) if player else {}
+    matchups = [_pick_view(conn, game, teams, picks.get(game["id"])) for game in games]
+
     players = db.get_all_players(conn)
     decided_picks = db.get_decided_picks(conn)
     standings = _build_standings(players, decided_picks)
     weekly = _build_weekly_breakdown(players, decided_picks)
 
     return templates.TemplateResponse(
-        request, "leaderboard.html", _template_context(request, conn, standings=standings, weekly=weekly)
+        request,
+        "pickem.html",
+        _template_context(
+            request, conn, matchups=matchups, week=week, season=season, standings=standings, weekly=weekly
+        ),
     )

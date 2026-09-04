@@ -1,0 +1,133 @@
+{% extends 'base.html' %}
+{% block title %}Pick'em · Fourth Down Forecast{% endblock %}
+{% block content %}
+<section class="hero compact-hero">
+  <div>
+    <p class="eyebrow">{{ season }} season · Week {{ week }}</p>
+    <h1>Pick'em.</h1>
+    <p class="hero-copy">Straight-up winner picks scored against final results. Picks lock at kickoff.</p>
+  </div>
+</section>
+
+{% if request.query_params.get('pick_error') == 'locked' %}
+<p class="notice">That game has already started — picks are locked.</p>
+{% endif %}
+
+<div class="pickem-layout">
+  <div>
+    <section class="section-heading">
+      <div><p class="eyebrow">This week</p><h2>Make your picks</h2></div>
+      <div class="sort-toggle">
+        <a href="?week={{ week - 1 }}" class="sort-link">◂ Prev week</a>
+        <a href="?week={{ week + 1 }}" class="sort-link">Next week ▸</a>
+      </div>
+    </section>
+
+    {% if matchups %}
+    <div class="pickem-list">
+      {% for matchup in matchups %}
+      <article class="matchup-card pickem-row">
+        <div class="card-meta"><span>Week {{ matchup.game.week }}</span><time>{{ matchup.kickoff }}</time></div>
+        <div class="teams-row">
+          <a href="/teams/{{ matchup.away.id }}" class="team-lockup">
+            <img src="{{ matchup.away_logo }}" alt="{{ matchup.away.name }} logo" class="team-logo">
+            <span>{{ matchup.away.abbreviation }}</span>
+          </a>
+          <div class="score-prediction">
+            {% if matchup.game.status == 'final' %}
+            <strong>{{ matchup.game.away_score }}<small>–</small>{{ matchup.game.home_score }}</strong><span>Final</span>
+            {% else %}
+            <strong>@</strong>
+            {% endif %}
+          </div>
+          <a href="/teams/{{ matchup.home.id }}" class="team-lockup team-lockup-right">
+            <img src="{{ matchup.home_logo }}" alt="{{ matchup.home.name }} logo" class="team-logo">
+            <span>{{ matchup.home.abbreviation }}</span>
+          </a>
+        </div>
+        <div class="pick-row">
+          <span class="pick-row-label">Your pick</span>
+          {% if matchup.pick_locked %}
+          <span class="pick-locked">
+            {% if matchup.player_pick_team_id == matchup.away.id %}{{ matchup.away.abbreviation }}
+            {% elif matchup.player_pick_team_id == matchup.home.id %}{{ matchup.home.abbreviation }}
+            {% else %}No pick{% endif %}
+            {% if matchup.game.status == 'final' and matchup.player_pick_team_id %}
+              {% if matchup.actual_winner_team_id is none %}
+              <span class="pick-result pick-push">Push</span>
+              {% else %}
+              <span class="pick-result {{ 'pick-correct' if matchup.player_pick_team_id == matchup.actual_winner_team_id else 'pick-incorrect' }}">{{ '✓' if matchup.player_pick_team_id == matchup.actual_winner_team_id else '✗' }}</span>
+              {% endif %}
+            {% endif %}
+          </span>
+          {% else %}
+          <div class="pick-buttons">
+            <form method="post" action="/games/{{ matchup.game.id }}/pick">
+              <input type="hidden" name="team_id" value="{{ matchup.away.id }}">
+              <input type="hidden" name="week" value="{{ week }}">
+              <button type="submit" class="pick-btn{{ ' pick-btn-active' if matchup.player_pick_team_id == matchup.away.id else '' }}">{{ matchup.away.abbreviation }}</button>
+            </form>
+            <form method="post" action="/games/{{ matchup.game.id }}/pick">
+              <input type="hidden" name="team_id" value="{{ matchup.home.id }}">
+              <input type="hidden" name="week" value="{{ week }}">
+              <button type="submit" class="pick-btn{{ ' pick-btn-active' if matchup.player_pick_team_id == matchup.home.id else '' }}">{{ matchup.home.abbreviation }}</button>
+            </form>
+          </div>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <section class="empty-state"><h2>No games are available for this week.</h2></section>
+    {% endif %}
+  </div>
+
+  <aside class="pickem-sidebar">
+    <section class="section-heading"><div><p class="eyebrow">Standings</p><h2>All-time record</h2></div></section>
+    {% if standings %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Rank</th><th>Player</th><th>Record</th><th>Win %</th></tr>
+        </thead>
+        <tbody>
+          {% for standing in standings %}
+          <tr>
+            <td>{{ standing.rank }}</td>
+            <td>{{ standing.player.name }}</td>
+            <td>{{ standing.record }}</td>
+            <td>{{ standing.win_pct_label }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <section class="empty-state"><h2>No one has joined the pick'em pool yet.</h2><p>Set your name from any page and start picking games to appear here.</p></section>
+    {% endif %}
+  </aside>
+</div>
+
+{% if weekly %}
+<section class="section-heading"><div><p class="eyebrow">By week</p><h2>Weekly accuracy</h2></div></section>
+{% for wk in weekly %}
+<div class="table-wrap week-table">
+  <table>
+    <thead>
+      <tr><th colspan="2">{{ wk.season }} · Week {{ wk.week }}</th></tr>
+      <tr><th>Player</th><th>Correct</th></tr>
+    </thead>
+    <tbody>
+      {% for entry in wk.players %}
+      <tr>
+        <td>{{ entry.player.name }}</td>
+        <td>{{ entry.correct }}/{{ entry.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}
