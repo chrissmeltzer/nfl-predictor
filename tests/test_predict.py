@@ -27,8 +27,8 @@ def seed_upcoming(conn):
     })
 
 
-def make_conn(tmp_path):
-    conn = db.get_connection(tmp_path / "test.db")
+def make_conn(dsn):
+    conn = db.get_connection(dsn)
     db.init_db(conn)
     db.upsert_team(conn, {"id": "A", "name": "Team A", "abbreviation": "A"})
     db.upsert_team(conn, {"id": "B", "name": "Team B", "abbreviation": "B"})
@@ -44,8 +44,8 @@ def test_load_weights_reads_yaml(tmp_path):
     assert weights["recent_games_window"] == 4
 
 
-def test_predict_game_baseline_uses_recent_scoring_and_opponent_defense(tmp_path):
-    conn = make_conn(tmp_path)
+def test_predict_game_baseline_uses_recent_scoring_and_opponent_defense(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 30, 10, "2026-08-01T00:00Z")
     seed_upcoming(conn)
     conn.commit()
@@ -58,8 +58,8 @@ def test_predict_game_baseline_uses_recent_scoring_and_opponent_defense(tmp_path
     assert "baseline" in result["breakdown"]["home"]
 
 
-def test_predict_game_skips_weather_when_no_forecast_row(tmp_path):
-    conn = make_conn(tmp_path)
+def test_predict_game_skips_weather_when_no_forecast_row(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 20, "2026-08-01T00:00Z")
     seed_upcoming(conn)
     conn.commit()
@@ -69,12 +69,12 @@ def test_predict_game_skips_weather_when_no_forecast_row(tmp_path):
     assert result["breakdown"]["home"]["weather"] == 0.0
 
 
-def test_predict_game_applies_negative_injury_adjustment(tmp_path):
-    conn = make_conn(tmp_path)
+def test_predict_game_applies_negative_injury_adjustment(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 20, "2026-08-01T00:00Z")
     seed_upcoming(conn)
     conn.execute(
-        "INSERT INTO injuries (team_id, player_name, position, status, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO injuries (team_id, player_name, position, status, fetched_at) VALUES (%s, %s, %s, %s, %s)",
         ("A", "Star QB", "QB", "Out", "2026-08-01T00:00Z"),
     )
     conn.commit()
@@ -84,8 +84,8 @@ def test_predict_game_applies_negative_injury_adjustment(tmp_path):
     assert result["breakdown"]["home"]["injuries"] < 0
 
 
-def test_recent_scoring_trend_weight_scales_baseline_toward_league_average(tmp_path):
-    conn = make_conn(tmp_path)
+def test_recent_scoring_trend_weight_scales_baseline_toward_league_average(pg_url):
+    conn = make_conn(pg_url)
     # Team A scores well above the league average (21.0) in its recent games,
     # while Team B has no recorded games, so the home baseline for A is driven
     # purely by A's own scoring average (no opponent-defense averaging).
@@ -112,8 +112,8 @@ def test_recent_scoring_trend_weight_scales_baseline_toward_league_average(tmp_p
     assert baseline_full > 25
 
 
-def test_pass_protection_adjustment_penalizes_weak_line_against_strong_pass_rush(tmp_path):
-    conn = make_conn(tmp_path)
+def test_pass_protection_adjustment_penalizes_weak_line_against_strong_pass_rush(pg_url):
+    conn = make_conn(pg_url)
     seed_game(conn, "g1", "A", "B", 20, 17, "2026-08-01T00:00Z")
     # Team A's offensive line allows sacks well above the league-average rate...
     db.upsert_team_game_stat(conn, {
@@ -135,8 +135,8 @@ def test_pass_protection_adjustment_penalizes_weak_line_against_strong_pass_rush
     assert result["breakdown"]["home"]["pass_protection"] < 0
 
 
-def test_pass_protection_adjustment_is_zero_without_stats_data(tmp_path):
-    conn = make_conn(tmp_path)
+def test_pass_protection_adjustment_is_zero_without_stats_data(pg_url):
+    conn = make_conn(pg_url)
     seed_upcoming(conn)
     conn.commit()
     game = conn.execute("SELECT * FROM games WHERE id = 'g2'").fetchone()
@@ -145,8 +145,8 @@ def test_pass_protection_adjustment_is_zero_without_stats_data(tmp_path):
     assert result["breakdown"]["home"]["pass_protection"] == 0.0
 
 
-def test_confidence_reflects_current_season_sample_not_lifetime_games(tmp_path):
-    conn = make_conn(tmp_path)
+def test_confidence_reflects_current_season_sample_not_lifetime_games(pg_url):
+    conn = make_conn(pg_url)
     # A full season of history between these two teams, entirely in a prior season -- a
     # lifetime-games-ever-played count would already be saturated before the new season
     # kicks off, which is exactly the bug: confidence should be low in a season with zero
@@ -170,8 +170,8 @@ def test_confidence_reflects_current_season_sample_not_lifetime_games(tmp_path):
     assert result["confidence_label"] == "Low"
 
 
-def test_confidence_rises_as_current_season_sample_grows(tmp_path):
-    conn = make_conn(tmp_path)
+def test_confidence_rises_as_current_season_sample_grows(pg_url):
+    conn = make_conn(pg_url)
     for i in range(8):
         db.upsert_game(conn, {
             "id": f"cur{i}", "season": 2026, "week": i + 1, "home_team_id": "A", "away_team_id": "B",
@@ -191,8 +191,8 @@ def test_confidence_rises_as_current_season_sample_grows(tmp_path):
     assert result["confidence_label"] == "High"
 
 
-def test_get_latest_prediction_returns_most_recent_row(tmp_path):
-    conn = make_conn(tmp_path)
+def test_get_latest_prediction_returns_most_recent_row(pg_url):
+    conn = make_conn(pg_url)
     seed_upcoming(conn)
     conn.commit()
     predict.save_prediction(
@@ -212,16 +212,16 @@ def test_get_latest_prediction_returns_most_recent_row(tmp_path):
     assert result["predicted_away_score"] == 17.0
 
 
-def test_get_latest_prediction_returns_none_when_no_prediction_saved(tmp_path):
-    conn = make_conn(tmp_path)
+def test_get_latest_prediction_returns_none_when_no_prediction_saved(pg_url):
+    conn = make_conn(pg_url)
     seed_upcoming(conn)
     conn.commit()
 
     assert predict.get_latest_prediction(conn, "g2") is None
 
 
-def test_upset_alert_flags_when_model_favorite_differs_from_elo_favorite(tmp_path):
-    conn = make_conn(tmp_path)
+def test_upset_alert_flags_when_model_favorite_differs_from_elo_favorite(pg_url):
+    conn = make_conn(pg_url)
     seed_upcoming(conn)
     # Team A has a big Elo edge, so Elo alone favors A. But seed enough lopsided recent
     # scoring for B (and none for A) that the full model flips to favor B instead.
@@ -238,8 +238,8 @@ def test_upset_alert_flags_when_model_favorite_differs_from_elo_favorite(tmp_pat
     assert result["upset_alert"] is True
 
 
-def test_upset_alert_false_when_model_agrees_with_elo(tmp_path):
-    conn = make_conn(tmp_path)
+def test_upset_alert_false_when_model_agrees_with_elo(pg_url):
+    conn = make_conn(pg_url)
     seed_upcoming(conn)
     db.upsert_team_rating(conn, "A", 1700.0, "2026-08-01T00:00:00+00:00")
     db.upsert_team_rating(conn, "B", 1300.0, "2026-08-01T00:00:00+00:00")
@@ -251,19 +251,15 @@ def test_upset_alert_false_when_model_agrees_with_elo(tmp_path):
     assert result["upset_alert"] is False
 
 
-def test_predict_game_backtest_ignores_finalized_games_that_happened_later(tmp_path):
-    limited_dir = tmp_path / "limited"
-    limited_dir.mkdir()
-    conn_limited = make_conn(limited_dir)
+def test_predict_game_backtest_ignores_finalized_games_that_happened_later(pg_db_factory):
+    conn_limited = make_conn(pg_db_factory())
     seed_game(conn_limited, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
     seed_game(conn_limited, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
     conn_limited.commit()
     target_limited = conn_limited.execute("SELECT * FROM games WHERE id = 'target'").fetchone()
     result_limited = predict.predict_game(conn_limited, WEIGHTS, target_limited)
 
-    full_dir = tmp_path / "full"
-    full_dir.mkdir()
-    conn_full = make_conn(full_dir)
+    conn_full = make_conn(pg_db_factory())
     seed_game(conn_full, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
     seed_game(conn_full, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
     # A lopsided game that happens *after* the target game -- must not leak into its prediction.
@@ -276,8 +272,8 @@ def test_predict_game_backtest_ignores_finalized_games_that_happened_later(tmp_p
     assert result_limited["predicted_away_score"] == result_full["predicted_away_score"]
 
 
-def test_save_prediction_persists_row(tmp_path):
-    conn = make_conn(tmp_path)
+def test_save_prediction_persists_row(pg_url):
+    conn = make_conn(pg_url)
     seed_upcoming(conn)
     conn.commit()
 

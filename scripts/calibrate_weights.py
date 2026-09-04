@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import db, predict
-from app.config import DB_PATH, WEIGHTS_PATH
+from app.config import DATABASE_URL, WEIGHTS_PATH
 
 CANDIDATE_MULTIPLIERS = [0.0, 0.5, 1.0, 1.5, 2.0]
 MARGIN_TUNABLE_KEYS = [
@@ -80,7 +80,7 @@ def calibrate(conn, base_weights: dict, games) -> dict:
 
 
 def main() -> None:
-    conn = db.get_connection(DB_PATH)
+    conn = db.get_connection(DATABASE_URL)
     db.init_db(conn)
     base_weights = predict.load_weights(WEIGHTS_PATH)
     games = _finalized_games(conn)

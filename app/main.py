@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-import sqlite3
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -12,13 +12,26 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from app import betting, db, predict, stats, sync
-from app.config import DB_PATH, STALENESS_HOURS, WEIGHTS_PATH
+from app.config import DATABASE_URL, STALENESS_HOURS, WEIGHTS_PATH
 from app.reference import DEFAULT_TEAM_COLOR, TEAM_COLORS, injury_impact, parse_kickoff
 from app.sources import espn
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    pool = ConnectionPool(DATABASE_URL, open=True, kwargs={"row_factory": dict_row})
+    with pool.connection() as conn:
+        db.init_db(conn)
+    app.state.db_pool = pool
+    yield
+    pool.close()
+
+
+app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
@@ -75,20 +88,16 @@ PICKER_COOKIE = "picker_id"
 PICKER_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 
-def _current_player(request: Request, conn) -> sqlite3.Row | None:
+def _current_player(request: Request, conn) -> dict | None:
     raw = request.cookies.get(PICKER_COOKIE)
     if not raw or not raw.isdecimal() or len(raw) > 18:
         return None
     return db.get_player_by_id(conn, int(raw))
 
 
-def get_db():
-    conn = db.get_connection(DB_PATH)
-    db.init_db(conn)
-    try:
+def get_db(request: Request):
+    with request.app.state.db_pool.connection() as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def _is_stale(conn) -> bool:
@@ -365,7 +374,7 @@ def _sync_if_needed(conn) -> tuple[int, int]:
 
 def _week_matchups(conn, season: int, week: int) -> tuple[list[dict], dict]:
     games = conn.execute(
-        "SELECT * FROM games WHERE season = ? AND week = ? ORDER BY kickoff_at",
+        "SELECT * FROM games WHERE season = %s AND week = %s ORDER BY kickoff_at",
         (season, week),
     ).fetchall()
     teams = {row["id"]: row for row in db.get_all_teams(conn)}
@@ -425,7 +434,7 @@ def team_search(q: str = "", conn=Depends(get_db)):
 
 @app.get("/teams/{team_id}", response_class=HTMLResponse)
 def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
-    team = conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
+    team = conn.execute("SELECT * FROM teams WHERE id = %s", (team_id,)).fetchone()
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
 
@@ -434,7 +443,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
     games = conn.execute(
         """
         SELECT * FROM games
-        WHERE (home_team_id = ? OR away_team_id = ?) AND season = ?
+        WHERE (home_team_id = %s OR away_team_id = %s) AND season = %s
         ORDER BY week ASC, kickoff_at ASC
         """,
         (team_id, team_id, current_season),
@@ -467,7 +476,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
 
 @app.get("/games/{game_id}", response_class=HTMLResponse)
 def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
-    game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
+    game = conn.execute("SELECT * FROM games WHERE id = %s", (game_id,)).fetchone()
     if game is None:
         raise HTTPException(status_code=404)
     weights = predict.load_weights(WEIGHTS_PATH)
@@ -475,11 +484,11 @@ def game_detail(request: Request, game_id: str, conn=Depends(get_db)):
     if game["status"] != "final":
         predict.save_prediction(conn, game_id, result, weights)
 
-    home_team = conn.execute("SELECT * FROM teams WHERE id = ?", (game["home_team_id"],)).fetchone()
-    away_team = conn.execute("SELECT * FROM teams WHERE id = ?", (game["away_team_id"],)).fetchone()
-    weather_row = conn.execute("SELECT * FROM weather_forecasts WHERE game_id = ?", (game_id,)).fetchone()
-    injuries_home = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["home_team_id"],)).fetchall()
-    injuries_away = conn.execute("SELECT * FROM injuries WHERE team_id = ?", (game["away_team_id"],)).fetchall()
+    home_team = conn.execute("SELECT * FROM teams WHERE id = %s", (game["home_team_id"],)).fetchone()
+    away_team = conn.execute("SELECT * FROM teams WHERE id = %s", (game["away_team_id"],)).fetchone()
+    weather_row = conn.execute("SELECT * FROM weather_forecasts WHERE game_id = %s", (game_id,)).fetchone()
+    injuries_home = conn.execute("SELECT * FROM injuries WHERE team_id = %s", (game["home_team_id"],)).fetchall()
+    injuries_away = conn.execute("SELECT * FROM injuries WHERE team_id = %s", (game["away_team_id"],)).fetchall()
     head_to_head = stats.head_to_head(conn, game["home_team_id"], game["away_team_id"])
     head_to_head_games = stats.head_to_head_games(conn, game["home_team_id"], game["away_team_id"])
     matchup = _game_view(conn, game, {home_team["id"]: home_team, away_team["id"]: away_team}, result)
@@ -520,9 +529,9 @@ def _recent_pick_accuracy(conn, team_id: str, limit: int = 5) -> dict | None:
                p.predicted_home_score, p.predicted_away_score
         FROM games g
         JOIN predictions p ON p.game_id = g.id
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
-        ORDER BY g.kickoff_at DESC, g.id DESC
-        LIMIT ?
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s)
+        ORDER BY g.kickoff_at DESC NULLS LAST, g.id DESC
+        LIMIT %s
         """,
         (team_id, team_id, limit),
     ).fetchall()
@@ -662,7 +671,7 @@ def submit_pick(
         next_url = _pick_redirect_url(week, game_id)
         return RedirectResponse(url=f"/join?next={quote(next_url, safe='')}", status_code=303)
 
-    game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
+    game = conn.execute("SELECT * FROM games WHERE id = %s", (game_id,)).fetchone()
     if game is None:
         raise HTTPException(status_code=404)
 

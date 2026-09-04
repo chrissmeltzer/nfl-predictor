@@ -66,7 +66,7 @@ def sync_schedule(conn, client: httpx.Client, season: int, week: int) -> list[di
     games = espn.fetch_scoreboard(client, season, week)
     for game in games:
         home_row = conn.execute(
-            "SELECT abbreviation FROM teams WHERE id = ?", (game["home_team_id"],)
+            "SELECT abbreviation FROM teams WHERE id = %s", (game["home_team_id"],)
         ).fetchone()
         db.upsert_game(conn, {**game, **_stadium_coords(home_row["abbreviation"] if home_row else None)})
     conn.commit()

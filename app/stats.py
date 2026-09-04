@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
-
 from app.reference import parse_kickoff
 
 MOV_DAMPENING_CAP = 21.0
@@ -11,17 +9,17 @@ RECENCY_DECAY = 0.85
 
 
 def _team_games(
-    conn: sqlite3.Connection, team_id: str, limit: int | None = None, before: str | None = None
-) -> list[sqlite3.Row]:
+    conn, team_id: str, limit: int | None = None, before: str | None = None
+) -> list[dict]:
     query = """
         SELECT * FROM games
-        WHERE status = 'final' AND (home_team_id = ? OR away_team_id = ?)
+        WHERE status = 'final' AND (home_team_id = %s OR away_team_id = %s)
     """
     params = [team_id, team_id]
     if before is not None:
-        query += " AND kickoff_at < ?"
+        query += " AND kickoff_at < %s"
         params.append(before)
-    query += " ORDER BY kickoff_at DESC, id DESC"
+    query += " ORDER BY kickoff_at DESC NULLS LAST, id DESC"
     if limit is not None:
         query += f" LIMIT {int(limit)}"
     return conn.execute(query, params).fetchall()
@@ -37,7 +35,7 @@ def _dampen_margin(scored: float, allowed: float, cap: float) -> tuple[float, fl
     return mean + diff / 2, mean - diff / 2
 
 
-def recent_scoring_stats(conn: sqlite3.Connection, team_id: str, window: int, before: str | None = None) -> dict:
+def recent_scoring_stats(conn, team_id: str, window: int, before: str | None = None) -> dict:
     games = _team_games(conn, team_id, limit=window, before=before)
     if not games:
         return {"avg_points_scored": None, "avg_points_allowed": None, "games_counted": 0}
@@ -60,7 +58,7 @@ def recent_scoring_stats(conn: sqlite3.Connection, team_id: str, window: int, be
 
 
 def recency_weighted_scoring(
-    conn: sqlite3.Connection, team_id: str, window: int, before: str | None = None
+    conn, team_id: str, window: int, before: str | None = None
 ) -> dict | None:
     """Exponentially recency-weighted scoring average, kept separate from
     recent_scoring_stats() so the flat baseline calculation is unaffected; used only to
@@ -86,7 +84,7 @@ def recency_weighted_scoring(
 
 
 def current_season_sample_size(
-    conn: sqlite3.Connection, team_id: str, season: int, window: int, before: str | None = None
+    conn, team_id: str, season: int, window: int, before: str | None = None
 ) -> int:
     """Count of the team's most recent `window` completed games that fall within `season`.
 
@@ -98,7 +96,7 @@ def current_season_sample_size(
     return sum(1 for g in games if g["season"] == season)
 
 
-def home_away_split(conn: sqlite3.Connection, team_id: str, before: str | None = None) -> dict:
+def home_away_split(conn, team_id: str, before: str | None = None) -> dict:
     games = _team_games(conn, team_id, before=before)
     if not games:
         return {"home_avg": None, "away_avg": None, "overall_avg": None}
@@ -120,17 +118,17 @@ def home_away_split(conn: sqlite3.Connection, team_id: str, before: str | None =
     }
 
 
-def head_to_head(conn: sqlite3.Connection, team_id: str, opponent_id: str, before: str | None = None) -> dict:
+def head_to_head(conn, team_id: str, opponent_id: str, before: str | None = None) -> dict:
     query = """
         SELECT * FROM games
         WHERE status = 'final' AND (
-            (home_team_id = ? AND away_team_id = ?) OR
-            (home_team_id = ? AND away_team_id = ?)
+            (home_team_id = %s AND away_team_id = %s) OR
+            (home_team_id = %s AND away_team_id = %s)
         )
     """
     params = [team_id, opponent_id, opponent_id, team_id]
     if before is not None:
-        query += " AND kickoff_at < ?"
+        query += " AND kickoff_at < %s"
         params.append(before)
     games = conn.execute(query, params).fetchall()
 
@@ -142,21 +140,21 @@ def head_to_head(conn: sqlite3.Connection, team_id: str, opponent_id: str, befor
 
 
 def head_to_head_games(
-    conn: sqlite3.Connection, team_id: str, opponent_id: str, before: str | None = None, limit: int = 8
+    conn, team_id: str, opponent_id: str, before: str | None = None, limit: int = 8
 ) -> list[dict]:
     """Chronological list of past meetings between two teams, most recent `limit` kept."""
     query = """
         SELECT * FROM games
         WHERE status = 'final' AND (
-            (home_team_id = ? AND away_team_id = ?) OR
-            (home_team_id = ? AND away_team_id = ?)
+            (home_team_id = %s AND away_team_id = %s) OR
+            (home_team_id = %s AND away_team_id = %s)
         )
     """
     params = [team_id, opponent_id, opponent_id, team_id]
     if before is not None:
-        query += " AND kickoff_at < ?"
+        query += " AND kickoff_at < %s"
         params.append(before)
-    query += " ORDER BY kickoff_at DESC, id DESC LIMIT ?"
+    query += " ORDER BY kickoff_at DESC NULLS LAST, id DESC LIMIT %s"
     params.append(limit)
     games = conn.execute(query, params).fetchall()
 
@@ -174,11 +172,11 @@ def head_to_head_games(
     return meetings
 
 
-def rest_days(conn: sqlite3.Connection, team_id: str, before: str) -> int | None:
+def rest_days(conn, team_id: str, before: str) -> int | None:
     row = conn.execute(
         """
         SELECT kickoff_at FROM games
-        WHERE status = 'final' AND (home_team_id = ? OR away_team_id = ?) AND kickoff_at < ?
+        WHERE status = 'final' AND (home_team_id = %s OR away_team_id = %s) AND kickoff_at < %s
         ORDER BY kickoff_at DESC LIMIT 1
         """,
         (team_id, team_id, before),
@@ -195,21 +193,21 @@ def _before_season_week_clause(alias: str, before: tuple[int, int] | None) -> tu
     if before is None:
         return "", []
     season, week = before
-    return f" AND ({alias}.season < ? OR ({alias}.season = ? AND {alias}.week < ?))", [season, season, week]
+    return f" AND ({alias}.season < %s OR ({alias}.season = %s AND {alias}.week < %s))", [season, season, week]
 
 
 def _team_game_stats(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
-) -> list[sqlite3.Row]:
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
+) -> list[dict]:
     clause, clause_params = _before_season_week_clause("team_game_stats", before)
     return conn.execute(
-        f"SELECT * FROM team_game_stats WHERE team_id = ?{clause} ORDER BY season DESC, week DESC LIMIT ?",
+        f"SELECT * FROM team_game_stats WHERE team_id = %s{clause} ORDER BY season DESC, week DESC LIMIT %s",
         [team_id, *clause_params, window],
     ).fetchall()
 
 
 def turnover_form(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> dict:
     rows = _team_game_stats(conn, team_id, window, before)
     if not rows:
@@ -219,7 +217,7 @@ def turnover_form(
 
 
 def turnovers_forced(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> dict:
     clause, clause_params = _before_season_week_clause("g", before)
     rows = conn.execute(
@@ -228,10 +226,10 @@ def turnovers_forced(
         FROM games g
         JOIN team_game_stats tgs
           ON tgs.season = g.season AND tgs.week = g.week
-         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND tgs.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -241,7 +239,7 @@ def turnovers_forced(
     return {"avg_turnovers_forced": sum(values) / len(values)}
 
 
-def epa_form(conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None) -> dict:
+def epa_form(conn, team_id: str, window: int, before: tuple[int, int] | None = None) -> dict:
     rows = _team_game_stats(conn, team_id, window, before)
     offense_values = [row["epa_offense"] for row in rows if row["epa_offense"] is not None]
     avg_offense = sum(offense_values) / len(offense_values) if offense_values else None
@@ -253,10 +251,10 @@ def epa_form(conn: sqlite3.Connection, team_id: str, window: int, before: tuple[
         FROM games g
         JOIN team_game_stats tgs
           ON tgs.season = g.season AND tgs.week = g.week
-         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND tgs.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -267,7 +265,7 @@ def epa_form(conn: sqlite3.Connection, team_id: str, window: int, before: tuple[
 
 
 def epa_split_form(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> dict:
     """Separate passing and rushing EPA, rather than the combined epa_offense figure.
 
@@ -288,10 +286,10 @@ def epa_split_form(
         FROM games g
         JOIN team_game_stats tgs
           ON tgs.season = g.season AND tgs.week = g.week
-         AND tgs.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND tgs.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -309,16 +307,16 @@ def epa_split_form(
 
 
 def strength_of_schedule(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> dict:
     clause, clause_params = _before_season_week_clause("g", before)
     opponent_rows = conn.execute(
         f"""
-        SELECT CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END AS opponent_id
+        SELECT CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END AS opponent_id
         FROM games g
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -336,13 +334,13 @@ def strength_of_schedule(
     return {"opponent_epa_avg": sum(epa_values) / len(epa_values)}
 
 
-def season_records(conn: sqlite3.Connection, season: int) -> dict[str, tuple[int, int, int]]:
+def season_records(conn, season: int) -> dict[str, tuple[int, int, int]]:
     """Wins/losses/ties for every team with a finalized game this season, in one query --
     keyed by team_id, as (wins, losses, ties). A team with no finalized games is omitted.
     """
     games = conn.execute(
         "SELECT home_team_id, away_team_id, home_score, away_score FROM games "
-        "WHERE season = ? AND status = 'final'",
+        "WHERE season = %s AND status = 'final'",
         (season,),
     ).fetchall()
     records: dict[str, list[int]] = {}
@@ -369,7 +367,7 @@ def _win_pct_from_record(record: tuple[int, int, int] | None) -> float | None:
     return (wins + 0.5 * ties) / total if total else None
 
 
-def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dict[str, dict]:
+def remaining_strength_of_schedule(conn, season: int) -> dict[str, dict]:
     """Ranks every team by the average win % of its remaining (unplayed) opponents this
     season. Rank 1 is the easiest remaining schedule. Teams with no remaining games, or
     whose remaining opponents haven't played yet, are omitted."""
@@ -378,7 +376,7 @@ def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dic
     win_pct = {team_id: _win_pct_from_record(records.get(team_id)) for team_id in team_ids}
 
     remaining_games = conn.execute(
-        "SELECT home_team_id, away_team_id FROM games WHERE season = ? AND status != 'final'",
+        "SELECT home_team_id, away_team_id FROM games WHERE season = %s AND status != 'final'",
         (season,),
     ).fetchall()
     remaining_opponents: dict[str, list[str]] = {team_id: [] for team_id in team_ids}
@@ -402,13 +400,13 @@ def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dic
     }
 
 
-def get_team_rating(conn: sqlite3.Connection, team_id: str, default: float = 1500.0) -> float:
-    row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = ?", (team_id,)).fetchone()
+def get_team_rating(conn, team_id: str, default: float = 1500.0) -> float:
+    row = conn.execute("SELECT elo_rating FROM team_ratings WHERE team_id = %s", (team_id,)).fetchone()
     return row["elo_rating"] if row else default
 
 
 def pass_rush_form(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> dict:
     """Sack rate the team's offense allows (protection) and its defense forces (pressure),
     both expressed as sacks per dropback (pass attempts + sacks) and summed over the window
@@ -430,13 +428,13 @@ def pass_rush_form(
                opp.pass_attempts AS opp_pass_attempts, opp.sacks_suffered AS opp_sacks_suffered
         FROM games g
         JOIN team_game_stats tgs
-          ON tgs.season = g.season AND tgs.week = g.week AND tgs.team_id = ?
+          ON tgs.season = g.season AND tgs.week = g.week AND tgs.team_id = %s
         JOIN team_game_stats opp
           ON opp.season = g.season AND opp.week = g.week
-         AND opp.team_id = CASE WHEN g.home_team_id = ? THEN g.away_team_id ELSE g.home_team_id END
-        WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?){clause}
+         AND opp.team_id = CASE WHEN g.home_team_id = %s THEN g.away_team_id ELSE g.home_team_id END
+        WHERE g.status = 'final' AND (g.home_team_id = %s OR g.away_team_id = %s){clause}
         ORDER BY g.season DESC, g.week DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [team_id, team_id, team_id, team_id, *clause_params, window],
     ).fetchall()
@@ -452,7 +450,7 @@ def pass_rush_form(
 
 
 def pace_form(
-    conn: sqlite3.Connection, team_id: str, window: int, before: tuple[int, int] | None = None
+    conn, team_id: str, window: int, before: tuple[int, int] | None = None
 ) -> float | None:
     rows = _team_game_stats(conn, team_id, window, before)
     values = [row["plays"] for row in rows if row["plays"] is not None]

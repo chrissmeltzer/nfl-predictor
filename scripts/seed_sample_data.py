@@ -1,16 +1,18 @@
-"""Seed nfl.db with a small set of sample data for local UI testing,
-without hitting any live APIs. Run with: python scripts/seed_sample_data.py
+"""Seed the configured Postgres database (DATABASE_URL) with a small set of
+sample data for local UI testing, without hitting any live APIs.
+Run with: python scripts/seed_sample_data.py
 """
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import db
-from app.config import DB_PATH
+from app.config import DATABASE_URL
 
-conn = db.get_connection(DB_PATH)
+conn = db.get_connection(DATABASE_URL)
 db.init_db(conn)
 
 db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
@@ -33,4 +35,5 @@ db.upsert_game(conn, {
 })
 
 conn.commit()
-print("Seeded sample data into", DB_PATH)
+_parsed = urlsplit(DATABASE_URL)
+print("Seeded sample data into", f"{_parsed.hostname}{_parsed.path}")
