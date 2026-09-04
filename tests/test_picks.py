@@ -135,10 +135,10 @@ def test_base_header_shows_picking_as_name_after_join(tmp_path, monkeypatch):
     assert "Chris" in response.text
 
 
-def test_schedule_page_shows_pick_buttons_for_scheduled_game(tmp_path, monkeypatch):
+def test_pickem_page_shows_pick_buttons_for_scheduled_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     _push_g1_kickoff_into_future(tmp_path)
-    response = client.get("/")
+    response = client.get("/pickem")
     assert response.status_code == 200
     assert 'action="/games/g1/pick"' in response.text
 
@@ -181,7 +181,7 @@ def test_submit_pick_rejected_after_kickoff(tmp_path, monkeypatch):
     assert row is None
 
 
-def test_schedule_page_shows_correct_pick_badge_for_final_game(tmp_path, monkeypatch):
+def test_pickem_page_shows_correct_pick_badge_for_final_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
@@ -192,11 +192,11 @@ def test_schedule_page_shows_correct_pick_badge_for_final_game(tmp_path, monkeyp
     conn.commit()
     conn.close()
 
-    response = client.get("/")
+    response = client.get("/pickem")
     assert "pick-correct" in response.text
 
 
-def test_schedule_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatch):
+def test_pickem_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
@@ -207,11 +207,11 @@ def test_schedule_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatc
     conn.commit()
     conn.close()
 
-    response = client.get("/")
+    response = client.get("/pickem")
     assert "pick-push" in response.text
 
 
-def test_leaderboard_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch):
+def test_pickem_page_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
@@ -222,7 +222,7 @@ def test_leaderboard_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch)
     conn.commit()
     conn.close()
 
-    response = client.get("/leaderboard")
+    response = client.get("/pickem")
 
     assert response.status_code == 200
     assert "Chris" in response.text
@@ -230,7 +230,7 @@ def test_leaderboard_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch)
     assert "1/1" in response.text
 
 
-def test_leaderboard_treats_tie_game_as_push(tmp_path, monkeypatch):
+def test_pickem_page_treats_tie_game_as_push(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
@@ -241,17 +241,17 @@ def test_leaderboard_treats_tie_game_as_push(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    response = client.get("/leaderboard")
+    response = client.get("/pickem")
 
     assert response.status_code == 200
     assert "0-0-1" in response.text
 
 
-def test_leaderboard_shows_joined_player_with_no_decided_picks(tmp_path, monkeypatch):
+def test_pickem_page_shows_joined_player_with_no_decided_picks(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     client.post("/join", data={"name": "Chris", "next": "/"})
 
-    response = client.get("/leaderboard")
+    response = client.get("/pickem")
 
     assert response.status_code == 200
     assert "Chris" in response.text
@@ -278,7 +278,7 @@ def test_submit_pick_rejects_team_not_in_game(tmp_path, monkeypatch):
     assert row is None
 
 
-def test_leaderboard_does_not_crash_on_final_game_with_null_scores(tmp_path, monkeypatch):
+def test_pickem_page_does_not_crash_on_final_game_with_null_scores(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
@@ -286,12 +286,12 @@ def test_leaderboard_does_not_crash_on_final_game_with_null_scores(tmp_path, mon
 
     conn = db.get_connection(tmp_path / "test.db")
     # A final game with no scores recorded is a data-integrity anomaly, but the
-    # leaderboard must degrade gracefully rather than 500 for every player.
+    # pickem page must degrade gracefully rather than 500 for every player.
     conn.execute("UPDATE games SET status = 'final', home_score = NULL, away_score = NULL WHERE id = 'g1'")
     conn.commit()
     conn.close()
 
-    response = client.get("/leaderboard")
+    response = client.get("/pickem")
 
     assert response.status_code == 200
     assert "Chris" in response.text
