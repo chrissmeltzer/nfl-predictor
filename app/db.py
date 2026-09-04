@@ -144,7 +144,7 @@ def upsert_game(conn, game: dict) -> None:
         INSERT INTO games (id, season, week, home_team_id, away_team_id, kickoff_at,
                            venue_name, is_outdoor, lat, lon, status, home_score, away_score)
         VALUES (%(id)s, %(season)s, %(week)s, %(home_team_id)s, %(away_team_id)s, %(kickoff_at)s,
-                %(venue_name)s, %(is_outdoor)s, %(lat)s, %(lon)s, %(status)s, %(home_score)s, %(away_score)s)
+                %(venue_name)s, %(is_outdoor)s::int, %(lat)s, %(lon)s, %(status)s, %(home_score)s, %(away_score)s)
         ON CONFLICT(id) DO UPDATE SET
             status=excluded.status, home_score=excluded.home_score,
             away_score=excluded.away_score, kickoff_at=excluded.kickoff_at,
