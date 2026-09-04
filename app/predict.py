@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,7 +63,7 @@ def _rest_days_adjustment(conn, team_id: str, kickoff_at: str, weight: float) ->
     return weight * _clamp((days - 7) * 0.5, -3, 3)
 
 
-def _weather_adjustment(weather_row: sqlite3.Row | None, weight: float) -> float:
+def _weather_adjustment(weather_row: dict | None, weight: float) -> float:
     if weather_row is None:
         return 0.0
     wind_penalty = -_clamp(((weather_row["wind_mph"] or 0) - 15) / 5, 0, 3)
@@ -168,7 +167,7 @@ def _pass_protection_adjustment(
     return -weight * _clamp(extra_sacks * POINTS_PER_SACK, -5, 5)
 
 
-def _team_ratings(conn, game: sqlite3.Row, home_id: str, away_id: str) -> dict[str, float]:
+def _team_ratings(conn, game: dict, home_id: str, away_id: str) -> dict[str, float]:
     """Elo ratings for both teams, as they stood at kickoff of `game`.
 
     For an upcoming game, that's simply the persisted current ratings -- every finalized
@@ -213,7 +212,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * radius * math.asin(math.sqrt(a))
 
 
-def _travel_adjustment(game: sqlite3.Row, away_abbr: str | None, is_home: bool, weight: float) -> float:
+def _travel_adjustment(game: dict, away_abbr: str | None, is_home: bool, weight: float) -> float:
     if is_home or away_abbr is None:
         return 0.0
     if game["lat"] is None or game["lon"] is None:
@@ -226,7 +225,7 @@ def _travel_adjustment(game: sqlite3.Row, away_abbr: str | None, is_home: bool, 
     return weight * _clamp(penalty, -4, 0)
 
 
-def _weather_total_shift(weather_row: sqlite3.Row | None) -> float:
+def _weather_total_shift(weather_row: dict | None) -> float:
     if weather_row is None:
         return 0.0
     wind_penalty = _clamp(((weather_row["wind_mph"] or 0) - 15) / 5, 0, 3)
@@ -245,7 +244,7 @@ def _pace_target_shift(conn, home_id: str, away_id: str, weight: float, before: 
 
 def _apply_total_anchor(
     conn, home_id: str, away_id: str, home_final: float, away_final: float,
-    weather_row: sqlite3.Row | None, weights: dict, before: tuple[int, int] | None,
+    weather_row: dict | None, weights: dict, before: tuple[int, int] | None,
 ) -> tuple[float, float, float]:
     anchor_weight = weights.get("total_points_anchor", 0.5)
     pace_weight = weights.get("pace", 0.3)
@@ -277,7 +276,7 @@ def _prediction_confidence(home_season_games: int, away_season_games: int, windo
     return score, label
 
 
-def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> dict:
+def predict_game(conn, weights: dict, game: dict) -> dict:
     window = weights.get("recent_games_window", 8)
     home_id, away_id = game["home_team_id"], game["away_team_id"]
     # Every historical lookup below is cut off at this game's own kickoff, so backtesting an
@@ -373,7 +372,7 @@ def predict_game(conn: sqlite3.Connection, weights: dict, game: sqlite3.Row) -> 
     }
 
 
-def get_latest_prediction(conn: sqlite3.Connection, game_id: str) -> dict | None:
+def get_latest_prediction(conn, game_id: str) -> dict | None:
     row = conn.execute(
         "SELECT predicted_home_score, predicted_away_score FROM predictions "
         "WHERE game_id = %s ORDER BY id DESC LIMIT 1",
@@ -384,7 +383,7 @@ def get_latest_prediction(conn: sqlite3.Connection, game_id: str) -> dict | None
     return {"predicted_home_score": row["predicted_home_score"], "predicted_away_score": row["predicted_away_score"]}
 
 
-def save_prediction(conn: sqlite3.Connection, game_id: str, result: dict, weights: dict) -> None:
+def save_prediction(conn, game_id: str, result: dict, weights: dict) -> None:
     """Snapshot the current prediction for a game, replacing any prior snapshot for it --
     there's only ever one "latest" prediction per game, so this upserts on game_id rather
     than accumulating a new row every time a still-scheduled game is re-synced.

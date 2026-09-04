@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
-
 from app import db
 
 BASE_RATING = 1500.0
@@ -21,7 +19,7 @@ def _mov_multiplier(margin: int, elo_diff: float) -> float:
     return ((abs(margin) + 3) ** 0.8) / (7.5 + 0.006 * abs(elo_diff))
 
 
-def recompute_ratings(conn: sqlite3.Connection, before: tuple[int, int] | None = None) -> dict[str, float]:
+def recompute_ratings(conn, before: tuple[int, int] | None = None) -> dict[str, float]:
     """Replay every finalized game in chronological order to build current Elo ratings.
 
     Pass `before=(season, week)` to stop the replay just short of that point, giving the
@@ -64,7 +62,7 @@ def recompute_ratings(conn: sqlite3.Connection, before: tuple[int, int] | None =
     return ratings
 
 
-def sync_ratings(conn: sqlite3.Connection, updated_at: str) -> None:
+def sync_ratings(conn, updated_at: str) -> None:
     ratings = recompute_ratings(conn)
     for team_id, rating in ratings.items():
         db.upsert_team_rating(conn, team_id, rating, updated_at)
