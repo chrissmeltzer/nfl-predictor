@@ -63,3 +63,88 @@ def test_build_betting_angles_history_avg_averages_combined_scores():
     ]
     result = betting.build_betting_angles(_matchup(), history)
     assert result["total"]["history_avg"] == 40.0
+
+
+def _week_matchup(
+    *, status="scheduled", game_id="g1", home_probability=80, away_probability=20,
+    confidence_label="High", home_name="Home Team", away_name="Away Team",
+):
+    return {
+        "game": {"status": status, "id": game_id, "week": 1},
+        "home": {"name": home_name}, "away": {"name": away_name},
+        "home_probability": home_probability, "away_probability": away_probability,
+        "home_logo": "home.png", "away_logo": "away.png",
+        "home_color": "#111", "away_color": "#222",
+        "confidence_label": confidence_label,
+        "kickoff": "Sun, Sep 6 · 1:00 PM",
+    }
+
+
+def test_build_safe_bets_includes_lopsided_high_confidence_game():
+    bets = betting.build_safe_bets([_week_matchup()])
+
+    assert len(bets) == 1
+    assert bets[0]["team"]["name"] == "Home Team"
+    assert bets[0]["opponent"]["name"] == "Away Team"
+    assert bets[0]["win_probability"] == 80
+    assert bets[0]["moneyline_odds"] < 0
+
+
+def test_build_safe_bets_excludes_close_game():
+    bets = betting.build_safe_bets([_week_matchup(home_probability=55, away_probability=45)])
+    assert bets == []
+
+
+def test_build_safe_bets_excludes_low_confidence_game_below_blowout_threshold():
+    bets = betting.build_safe_bets(
+        [_week_matchup(confidence_label="Low", home_probability=80, away_probability=20)]
+    )
+    assert bets == []
+
+
+def test_build_safe_bets_includes_low_confidence_game_at_blowout_threshold():
+    bets = betting.build_safe_bets(
+        [_week_matchup(confidence_label="Low", home_probability=88, away_probability=12)]
+    )
+    assert len(bets) == 1
+    assert bets[0]["team"]["name"] == "Home Team"
+
+
+def test_build_safe_bets_excludes_moderate_confidence_game_below_its_threshold():
+    bets = betting.build_safe_bets(
+        [_week_matchup(confidence_label="Moderate", home_probability=70, away_probability=30)]
+    )
+    assert bets == []
+
+
+def test_build_safe_bets_includes_moderate_confidence_game_at_its_threshold():
+    bets = betting.build_safe_bets(
+        [_week_matchup(confidence_label="Moderate", home_probability=76, away_probability=24)]
+    )
+    assert len(bets) == 1
+
+
+def test_build_safe_bets_excludes_unrecognized_confidence_label():
+    bets = betting.build_safe_bets(
+        [_week_matchup(confidence_label="Unknown", home_probability=95, away_probability=5)]
+    )
+    assert bets == []
+
+
+def test_build_safe_bets_excludes_final_games():
+    bets = betting.build_safe_bets([_week_matchup(status="final")])
+    assert bets == []
+
+
+def test_build_safe_bets_picks_away_favorite_when_away_probability_higher():
+    bets = betting.build_safe_bets([_week_matchup(home_probability=20, away_probability=80)])
+    assert bets[0]["team"]["name"] == "Away Team"
+
+
+def test_build_safe_bets_sorts_by_win_probability_descending():
+    matchups = [
+        _week_matchup(game_id="g1", home_probability=76, away_probability=24),
+        _week_matchup(game_id="g2", home_probability=90, away_probability=10),
+    ]
+    bets = betting.build_safe_bets(matchups)
+    assert [bet["win_probability"] for bet in bets] == [90, 76]

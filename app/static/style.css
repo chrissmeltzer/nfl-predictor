@@ -62,6 +62,7 @@ h1, h2, h3, p { margin-top: 0; } h1 { max-width: 680px; margin-bottom: .7rem; fo
 .betting-row strong { font-size: .95rem; }
 .betting-hint { margin: .25rem 0 0; max-width: 46ch; color: var(--muted); font-size: .82rem; }
 .betting-value { flex-shrink: 0; text-align: right; font-weight: 700; line-height: 1.5; white-space: nowrap; }
+.bet-team { display: flex; align-items: center; gap: 1rem; padding: 1rem 0; } .bet-team h3 { margin: 0; font-size: 1.15rem; } .bet-opponent { margin: .15rem 0 0; color: var(--muted); font-size: .82rem; } .bet-footer-row { align-items: flex-end; } .bet-odds { font-size: 1.4rem; color: var(--green); }
 
 /* Head-to-head matchup history */
 .matchup-history-card { padding: 1.5rem; margin-bottom: 2rem; }

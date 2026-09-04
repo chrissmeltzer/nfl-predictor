@@ -317,25 +317,34 @@ def trigger_sync(conn=Depends(get_db)):
     return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
+def _sync_if_needed(conn) -> tuple[int, int]:
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         season, current_week = espn.fetch_current_week(client)
         if _is_stale(conn):
             sync.sync_all(conn, client, current_season=season)
+    return season, current_week
 
-    week = week or current_week
+
+def _week_matchups(conn, season: int, week: int) -> tuple[list[dict], dict]:
     games = conn.execute(
         "SELECT * FROM games WHERE season = ? AND week = ? ORDER BY kickoff_at",
         (season, week),
     ).fetchall()
     teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
-
     weights = predict.load_weights(WEIGHTS_PATH)
     matchups = [_game_view(conn, game, teams, predict.predict_game(conn, weights, game)) for game in games]
+    return matchups, teams
+
+
+@app.get("/", response_class=HTMLResponse)
+def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
+    season, current_week = _sync_if_needed(conn)
+    week = week or current_week
+    matchups, teams = _week_matchups(conn, season, week)
 
     player = _current_player(request, conn)
-    picks = db.get_player_picks_for_games(conn, player["id"], [g["id"] for g in games]) if player else {}
+    game_ids = [matchup["game"]["id"] for matchup in matchups]
+    picks = db.get_player_picks_for_games(conn, player["id"], game_ids) if player else {}
     for matchup in matchups:
         matchup["player_pick_team_id"] = picks.get(matchup["game"]["id"])
         matchup["pick_locked"] = _pick_locked(matchup["game"])
@@ -345,6 +354,21 @@ def schedule(request: Request, week: int | None = None, conn=Depends(get_db)):
         "index.html",
         _template_context(
             request, conn, matchups=matchups, teams=list(teams.values()), week=week, season=season
+        ),
+    )
+
+
+@app.get("/bets", response_class=HTMLResponse)
+def bets_page(request: Request, conn=Depends(get_db)):
+    season, current_week = _sync_if_needed(conn)
+    matchups, teams = _week_matchups(conn, season, current_week)
+    safe_bets = betting.build_safe_bets(matchups)
+
+    return templates.TemplateResponse(
+        request,
+        "bets.html",
+        _template_context(
+            request, conn, safe_bets=safe_bets, teams=list(teams.values()), week=current_week, season=season
         ),
     )
 
