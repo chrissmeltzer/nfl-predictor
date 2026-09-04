@@ -9,9 +9,8 @@ from pathlib import Path
 import yaml
 
 from app import elo, stats
-from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE, STADIUMS
+from app.reference import DEFAULT_POSITION_IMPORTANCE, POSITION_IMPORTANCE, STADIUMS, injury_counts_toward_model
 
-INJURY_STATUSES_COUNTED = {"Out", "Doubtful", "Injured Reserve"}
 LEAGUE_AVERAGE_SCORE = 21.0
 LEAGUE_AVERAGE_TOTAL = 44.0
 LEAGUE_AVERAGE_PLAYS = 64.0
@@ -68,8 +67,8 @@ def _rest_days_adjustment(conn, team_id: str, kickoff_at: str, weight: float) ->
 def _weather_adjustment(weather_row: sqlite3.Row | None, weight: float) -> float:
     if weather_row is None:
         return 0.0
-    wind_penalty = -_clamp((weather_row["wind_mph"] - 15) / 5, 0, 3)
-    precip_penalty = -_clamp(weather_row["precip_pct"] / 25, 0, 2)
+    wind_penalty = -_clamp(((weather_row["wind_mph"] or 0) - 15) / 5, 0, 3)
+    precip_penalty = -_clamp((weather_row["precip_pct"] or 0) / 25, 0, 2)
     return weight * (wind_penalty + precip_penalty)
 
 
@@ -77,7 +76,7 @@ def _injuries_adjustment(conn, team_id: str, weight: float) -> float:
     rows = conn.execute("SELECT position, status FROM injuries WHERE team_id = ?", (team_id,)).fetchall()
     total = 0.0
     for row in rows:
-        if row["status"] not in INJURY_STATUSES_COUNTED:
+        if not injury_counts_toward_model(row["status"]):
             continue
         importance = POSITION_IMPORTANCE.get(row["position"], DEFAULT_POSITION_IMPORTANCE)
         total -= importance * 0.3
@@ -184,13 +183,15 @@ def _team_ratings(conn, game: sqlite3.Row, home_id: str, away_id: str) -> dict[s
     return {home_id: stats.get_team_rating(conn, home_id), away_id: stats.get_team_rating(conn, away_id)}
 
 
+def _effective_rating(rating: float, is_home: bool) -> float:
+    """A team's Elo rating with home-field advantage folded in, if it's playing at home."""
+    return rating + elo.HOME_FIELD_ADVANTAGE if is_home else rating
+
+
 def _elo_adjustment(
     ratings: dict[str, float], team_id: str, opponent_id: str, is_home: bool, weight: float
 ) -> float:
-    team_rating = ratings[team_id]
-    opponent_rating = ratings[opponent_id]
-    home_field = elo.HOME_FIELD_ADVANTAGE if is_home else -elo.HOME_FIELD_ADVANTAGE
-    rating_diff = (team_rating - opponent_rating) + home_field
+    rating_diff = _effective_rating(ratings[team_id], is_home) - _effective_rating(ratings[opponent_id], not is_home)
     return weight * _clamp(rating_diff / 25.0, -7, 7)
 
 
@@ -198,8 +199,8 @@ def _elo_favorite(ratings: dict[str, float], home_id: str, away_id: str) -> str:
     """Which team Elo alone (rating + home field, no other factors) would favor -- used to
     flag when the full model's pick diverges from the raw power rating.
     """
-    home_rating = ratings[home_id] + elo.HOME_FIELD_ADVANTAGE
-    away_rating = ratings[away_id]
+    home_rating = _effective_rating(ratings[home_id], True)
+    away_rating = _effective_rating(ratings[away_id], False)
     return home_id if home_rating >= away_rating else away_id
 
 
@@ -228,8 +229,8 @@ def _travel_adjustment(game: sqlite3.Row, away_abbr: str | None, is_home: bool, 
 def _weather_total_shift(weather_row: sqlite3.Row | None) -> float:
     if weather_row is None:
         return 0.0
-    wind_penalty = _clamp((weather_row["wind_mph"] - 15) / 5, 0, 3)
-    precip_penalty = _clamp(weather_row["precip_pct"] / 25, 0, 2)
+    wind_penalty = _clamp(((weather_row["wind_mph"] or 0) - 15) / 5, 0, 3)
+    precip_penalty = _clamp((weather_row["precip_pct"] or 0) / 25, 0, 2)
     return -(wind_penalty + precip_penalty) * 2
 
 
@@ -384,11 +385,21 @@ def get_latest_prediction(conn: sqlite3.Connection, game_id: str) -> dict | None
 
 
 def save_prediction(conn: sqlite3.Connection, game_id: str, result: dict, weights: dict) -> None:
+    """Snapshot the current prediction for a game, replacing any prior snapshot for it --
+    there's only ever one "latest" prediction per game, so this upserts on game_id rather
+    than accumulating a new row every time a still-scheduled game is re-synced.
+    """
     conn.execute(
         """
         INSERT INTO predictions (game_id, predicted_home_score, predicted_away_score,
                                   factor_breakdown_json, weights_snapshot_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(game_id) DO UPDATE SET
+            predicted_home_score = excluded.predicted_home_score,
+            predicted_away_score = excluded.predicted_away_score,
+            factor_breakdown_json = excluded.factor_breakdown_json,
+            weights_snapshot_json = excluded.weights_snapshot_json,
+            created_at = excluded.created_at
         """,
         (
             game_id,

@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import betting, db, predict, stats, sync
 from app.config import DB_PATH, STALENESS_HOURS, WEIGHTS_PATH
-from app.reference import DEFAULT_TEAM_COLOR, TEAM_COLORS
+from app.reference import DEFAULT_TEAM_COLOR, TEAM_COLORS, injury_impact, parse_kickoff
 from app.sources import espn
 
 app = FastAPI()
@@ -104,7 +104,7 @@ def _pick_locked(game) -> bool:
     kickoff = game["kickoff_at"]
     if not kickoff:
         return False
-    kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+    kickoff_dt = parse_kickoff(kickoff)
     return kickoff_dt <= datetime.now(timezone.utc)
 
 
@@ -120,7 +120,7 @@ def _format_kickoff(value: str | None) -> str:
     if not value:
         return "Kickoff TBD"
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%a, %b %-d · %-I:%M %p")
+        return parse_kickoff(value).astimezone().strftime("%a, %b %-d · %-I:%M %p")
     except ValueError:
         return value
 
@@ -172,19 +172,8 @@ def _weather_severity(weather_row) -> dict | None:
     return {"icon": icon, "severity": severity, "label": label}
 
 
-_INJURY_IMPACT = {
-    "out": ("impact-out", "Out"),
-    "ir": ("impact-out", "Out"),
-    "injured reserve": ("impact-out", "Out"),
-    "reserve/injured": ("impact-out", "Out"),
-    "pup": ("impact-out", "Out"),
-    "doubtful": ("impact-doubtful", "Doubtful"),
-    "questionable": ("impact-questionable", "Questionable"),
-}
-
-
 def _injury_impact(status: str | None) -> dict:
-    css_class, label = _INJURY_IMPACT.get((status or "").strip().lower(), ("impact-minor", status or "Active"))
+    css_class, label = injury_impact(status)
     return {"class": css_class, "label": label}
 
 
@@ -330,11 +319,43 @@ def trigger_sync(conn=Depends(get_db)):
     return {"status": "ok"}
 
 
+def _cached_current_season_week(conn) -> tuple[int, int] | None:
+    """Season/week from the last successful sync. None for a database that has never synced."""
+    season = db.get_meta(conn, "current_season")
+    week = db.get_meta(conn, "current_week")
+    if season is None or week is None:
+        return None
+    return int(season), int(week)
+
+
+def _live_current_season_week() -> tuple[int, int]:
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        return espn.fetch_current_week(client)
+
+
+def _current_season_week(conn) -> tuple[int, int]:
+    """The season/week the app currently considers "current" -- read from the last sync's
+    cache while that sync is still fresh, otherwise fetched live. Avoids a blocking ESPN
+    call on every page view without ever showing arbitrarily stale data.
+    """
+    if not _is_stale(conn):
+        cached = _cached_current_season_week(conn)
+        if cached is not None:
+            return cached
+    return _live_current_season_week()
+
+
 def _sync_if_needed(conn) -> tuple[int, int]:
+    if not _is_stale(conn):
+        cached = _cached_current_season_week(conn)
+        if cached is not None:
+            return cached
+        # Fresh enough to skip a resync, but the cache hasn't been populated yet (e.g. an
+        # older sync from before this cache existed) -- a live lookup alone is still cheap.
+        return _live_current_season_week()
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         season, current_week = espn.fetch_current_week(client)
-        if _is_stale(conn):
-            sync.sync_all(conn, client, current_season=season)
+        sync.sync_all(conn, client, current_season=season)
     return season, current_week
 
 
@@ -343,7 +364,7 @@ def _week_matchups(conn, season: int, week: int) -> tuple[list[dict], dict]:
         "SELECT * FROM games WHERE season = ? AND week = ? ORDER BY kickoff_at",
         (season, week),
     ).fetchall()
-    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
+    teams = {row["id"]: row for row in db.get_all_teams(conn)}
     weights = predict.load_weights(WEIGHTS_PATH)
     matchups = [_game_view(conn, game, teams, predict.predict_game(conn, weights, game)) for game in games]
     return matchups, teams
@@ -391,7 +412,7 @@ def team_search(q: str = "", conn=Depends(get_db)):
     query = q.strip().lower()
     if not query:
         return RedirectResponse(url="/", status_code=303)
-    teams = conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
+    teams = db.get_all_teams(conn)
     match = next((team for team in teams if query in team["name"].lower() or query == team["abbreviation"].lower()), None)
     if not match:
         return RedirectResponse(url="/?team_not_found=1", status_code=303)
@@ -404,8 +425,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    with httpx.Client(timeout=30, follow_redirects=True) as client:
-        current_season, _ = espn.fetch_current_week(client)
+    current_season, _ = _current_season_week(conn)
 
     games = conn.execute(
         """
@@ -415,7 +435,7 @@ def team_detail(request: Request, team_id: str, conn=Depends(get_db)):
         """,
         (team_id, team_id, current_season),
     ).fetchall()
-    teams = {row["id"]: row for row in conn.execute("SELECT * FROM teams ORDER BY name").fetchall()}
+    teams = {row["id"]: row for row in db.get_all_teams(conn)}
     weights = predict.load_weights(WEIGHTS_PATH)
     schedule_rows = [
         _game_view(conn, game, teams, predict.predict_game(conn, weights, game), team_id) for game in games
@@ -497,44 +517,31 @@ def _recent_pick_accuracy(conn, team_id: str, limit: int = 5) -> dict | None:
         FROM games g
         JOIN predictions p ON p.game_id = g.id
         WHERE g.status = 'final' AND (g.home_team_id = ? OR g.away_team_id = ?)
-          AND p.id IN (SELECT MAX(id) FROM predictions GROUP BY game_id)
         ORDER BY g.kickoff_at DESC, g.id DESC
         LIMIT ?
         """,
         (team_id, team_id, limit),
     ).fetchall()
-    if not rows:
+    # Ties are excluded rather than counted as a win for either side, matching the "push"
+    # treatment ties get in the pick'em pool (see _pick_outcome).
+    decided = [row for row in rows if row["home_score"] != row["away_score"]]
+    if not decided:
         return None
     correct = sum(
-        1 for row in rows
-        if (row["home_score"] >= row["away_score"]) == (row["predicted_home_score"] >= row["predicted_away_score"])
+        1 for row in decided
+        if (row["home_score"] > row["away_score"]) == (row["predicted_home_score"] >= row["predicted_away_score"])
     )
-    return {"correct": correct, "total": len(rows)}
+    return {"correct": correct, "total": len(decided)}
 
 
-def _team_record(conn, team_id: str, season: int) -> str:
-    games = conn.execute(
-        "SELECT home_team_id, home_score, away_score FROM games "
-        "WHERE season = ? AND status = 'final' AND (home_team_id = ? OR away_team_id = ?)",
-        (season, team_id, team_id),
-    ).fetchall()
-    wins = losses = ties = 0
-    for g in games:
-        team_score = g["home_score"] if g["home_team_id"] == team_id else g["away_score"]
-        opponent_score = g["away_score"] if g["home_team_id"] == team_id else g["home_score"]
-        if team_score > opponent_score:
-            wins += 1
-        elif team_score < opponent_score:
-            losses += 1
-        else:
-            ties += 1
+def _format_record(record: tuple[int, int, int]) -> str:
+    wins, losses, ties = record
     return f"{wins}-{losses}-{ties}" if ties else f"{wins}-{losses}"
 
 
 @app.get("/rankings", response_class=HTMLResponse)
 def rankings(request: Request, conn=Depends(get_db)):
-    with httpx.Client(timeout=30, follow_redirects=True) as client:
-        season, _ = espn.fetch_current_week(client)
+    season, _ = _current_season_week(conn)
 
     rows = conn.execute(
         """
@@ -544,17 +551,18 @@ def rankings(request: Request, conn=Depends(get_db)):
         ORDER BY elo_rating DESC
         """
     ).fetchall()
+    records = stats.season_records(conn, season)
     ranked_teams = [
         {
             "rank": i,
             "team": row,
             "logo": _logo_url(row),
             "elo_rating": round(row["elo_rating"]),
-            "record": _team_record(conn, row["id"], season),
+            "record": _format_record(records.get(row["id"], (0, 0, 0))),
         }
         for i, row in enumerate(rows, start=1)
     ]
-    teams = conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
+    teams = db.get_all_teams(conn)
 
     return templates.TemplateResponse(
         request,
@@ -575,7 +583,6 @@ def accuracy(request: Request, conn=Depends(get_db)):
         JOIN teams ht ON ht.id = g.home_team_id
         JOIN teams at_ ON at_.id = g.away_team_id
         WHERE g.status = 'final'
-          AND p.id IN (SELECT MAX(id) FROM predictions GROUP BY game_id)
         ORDER BY p.created_at DESC
         """
     ).fetchall()
@@ -586,7 +593,7 @@ def accuracy(request: Request, conn=Depends(get_db)):
         errors.append({"row": row, "margin_error": margin_error, "total_error": total_error})
     mean_margin_error = sum(error["margin_error"] for error in errors) / len(errors) if errors else None
     mean_total_error = sum(error["total_error"] for error in errors) / len(errors) if errors else None
-    teams = conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
+    teams = db.get_all_teams(conn)
 
     return templates.TemplateResponse(
         request,
@@ -595,8 +602,19 @@ def accuracy(request: Request, conn=Depends(get_db)):
     )
 
 
+def _safe_redirect_target(next_url: str) -> str:
+    """Only ever redirect within this site -- `next` arrives as a user-controlled query
+    param / form field, so an absolute or scheme-relative URL here would be an open
+    redirect (e.g. /join?next=https://evil.example).
+    """
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        return next_url
+    return "/"
+
+
 @app.get("/join", response_class=HTMLResponse)
 def join_form(request: Request, next: str = "/", error: str | None = None, conn=Depends(get_db)):
+    next = _safe_redirect_target(next)
     return templates.TemplateResponse(
         request, "join.html", _template_context(request, conn, next=next, error=error)
     )
@@ -604,6 +622,7 @@ def join_form(request: Request, next: str = "/", error: str | None = None, conn=
 
 @app.post("/join")
 def join_submit(request: Request, name: str = Form(...), next: str = Form("/"), conn=Depends(get_db)):
+    next = _safe_redirect_target(next)
     cleaned = name.strip()
     if not cleaned:
         return templates.TemplateResponse(
@@ -721,10 +740,7 @@ def _build_weekly_breakdown(players, decided_picks) -> list[dict]:
 
 @app.get("/pickem", response_class=HTMLResponse)
 def pickem_page(request: Request, conn=Depends(get_db)):
-    with httpx.Client(timeout=30, follow_redirects=True) as client:
-        season, _ = espn.fetch_current_week(client)
-        if _is_stale(conn):
-            sync.sync_all(conn, client, current_season=season)
+    _sync_if_needed(conn)
 
     players = db.get_all_players(conn)
     decided_picks = db.get_decided_picks(conn)

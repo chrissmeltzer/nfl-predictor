@@ -54,7 +54,6 @@ CREATE TABLE IF NOT EXISTS predictions (
     weights_snapshot_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_predictions_game ON predictions(game_id);
 
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -130,10 +129,30 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, column_defs: dict[str,
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
+def _ensure_unique_predictions_per_game(conn: sqlite3.Connection) -> None:
+    """Collapse any duplicate prediction rows down to the most recent one per game, then
+    enforce one-row-per-game going forward via a unique index. Older schema versions let a
+    new row accumulate every time a still-scheduled game was re-synced, so an existing
+    database may have duplicates that need collapsing before the index can be created.
+    """
+    existing = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_predictions_game'"
+    ).fetchone()
+    if existing and existing["sql"] and "UNIQUE" not in existing["sql"].upper():
+        conn.execute("DROP INDEX idx_predictions_game")
+    conn.execute("DELETE FROM predictions WHERE id NOT IN (SELECT MAX(id) FROM predictions GROUP BY game_id)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_predictions_game ON predictions(game_id)")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     _ensure_columns(conn, "team_game_stats", _TEAM_GAME_STATS_MIGRATIONS)
+    _ensure_unique_predictions_per_game(conn)
     conn.commit()
+
+
+def get_all_teams(conn) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM teams ORDER BY name").fetchall()
 
 
 def upsert_team(conn, team: dict) -> None:

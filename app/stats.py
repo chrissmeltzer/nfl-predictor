@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+
+from app.reference import parse_kickoff
 
 MOV_DAMPENING_CAP = 21.0
 # Heuristic exponential decay per game back in time (game 0 = most recent, weight 1.0;
@@ -185,8 +186,8 @@ def rest_days(conn: sqlite3.Connection, team_id: str, before: str) -> int | None
     if not row or not row["kickoff_at"]:
         return None
 
-    last = datetime.fromisoformat(row["kickoff_at"].replace("Z", "+00:00"))
-    upcoming = datetime.fromisoformat(before.replace("Z", "+00:00"))
+    last = parse_kickoff(row["kickoff_at"])
+    upcoming = parse_kickoff(before)
     return (upcoming - last).days
 
 
@@ -335,25 +336,37 @@ def strength_of_schedule(
     return {"opponent_epa_avg": sum(epa_values) / len(epa_values)}
 
 
-def _season_win_pct(conn: sqlite3.Connection, team_id: str, season: int) -> float | None:
+def season_records(conn: sqlite3.Connection, season: int) -> dict[str, tuple[int, int, int]]:
+    """Wins/losses/ties for every team with a finalized game this season, in one query --
+    keyed by team_id, as (wins, losses, ties). A team with no finalized games is omitted.
+    """
     games = conn.execute(
-        "SELECT home_team_id, home_score, away_score FROM games "
-        "WHERE season = ? AND status = 'final' AND (home_team_id = ? OR away_team_id = ?)",
-        (season, team_id, team_id),
+        "SELECT home_team_id, away_team_id, home_score, away_score FROM games "
+        "WHERE season = ? AND status = 'final'",
+        (season,),
     ).fetchall()
-    if not games:
-        return None
-    wins = losses = ties = 0
+    records: dict[str, list[int]] = {}
     for g in games:
-        team_score = g["home_score"] if g["home_team_id"] == team_id else g["away_score"]
-        opponent_score = g["away_score"] if g["home_team_id"] == team_id else g["home_score"]
-        if team_score > opponent_score:
-            wins += 1
-        elif team_score < opponent_score:
-            losses += 1
-        else:
-            ties += 1
-    return (wins + 0.5 * ties) / (wins + losses + ties)
+        for team_id, team_score, opponent_score in (
+            (g["home_team_id"], g["home_score"], g["away_score"]),
+            (g["away_team_id"], g["away_score"], g["home_score"]),
+        ):
+            wlt = records.setdefault(team_id, [0, 0, 0])
+            if team_score > opponent_score:
+                wlt[0] += 1
+            elif team_score < opponent_score:
+                wlt[1] += 1
+            else:
+                wlt[2] += 1
+    return {team_id: tuple(wlt) for team_id, wlt in records.items()}
+
+
+def _win_pct_from_record(record: tuple[int, int, int] | None) -> float | None:
+    if record is None:
+        return None
+    wins, losses, ties = record
+    total = wins + losses + ties
+    return (wins + 0.5 * ties) / total if total else None
 
 
 def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dict[str, dict]:
@@ -361,7 +374,8 @@ def remaining_strength_of_schedule(conn: sqlite3.Connection, season: int) -> dic
     season. Rank 1 is the easiest remaining schedule. Teams with no remaining games, or
     whose remaining opponents haven't played yet, are omitted."""
     team_ids = [row["id"] for row in conn.execute("SELECT id FROM teams").fetchall()]
-    win_pct = {team_id: _season_win_pct(conn, team_id, season) for team_id in team_ids}
+    records = season_records(conn, season)
+    win_pct = {team_id: _win_pct_from_record(records.get(team_id)) for team_id in team_ids}
 
     remaining_games = conn.execute(
         "SELECT home_team_id, away_team_id FROM games WHERE season = ? AND status != 'final'",

@@ -8,7 +8,7 @@ import httpx
 
 from app import db, elo, predict
 from app.config import SYNC_SEASONS_BACK, WEIGHTS_PATH
-from app.reference import STADIUMS, canonical_abbreviation
+from app.reference import STADIUMS, canonical_abbreviation, parse_kickoff
 from app.sources import espn, nflverse, weather
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _stadium_coords(abbreviation: str | None) -> dict:
+    stadium = STADIUMS.get(abbreviation, {}) if abbreviation else {}
+    return {"lat": stadium.get("lat"), "lon": stadium.get("lon")}
 
 
 def sync_teams(conn, client: httpx.Client) -> None:
@@ -33,13 +38,11 @@ def sync_historical(conn, client: httpx.Client, min_season: int, max_season: int
         if not home_id or not away_id:
             logger.warning("Skipping %s: team not found in teams table", game["id"])
             continue
-        stadium = STADIUMS.get(game["home_abbreviation"], {})
         db.upsert_game(conn, {
             **game,
             "home_team_id": home_id,
             "away_team_id": away_id,
-            "lat": stadium.get("lat"),
-            "lon": stadium.get("lon"),
+            **_stadium_coords(game["home_abbreviation"]),
         })
     conn.commit()
 
@@ -65,8 +68,7 @@ def sync_schedule(conn, client: httpx.Client, season: int, week: int) -> list[di
         home_row = conn.execute(
             "SELECT abbreviation FROM teams WHERE id = ?", (game["home_team_id"],)
         ).fetchone()
-        stadium = STADIUMS.get(home_row["abbreviation"], {}) if home_row else {}
-        db.upsert_game(conn, {**game, "lat": stadium.get("lat"), "lon": stadium.get("lon")})
+        db.upsert_game(conn, {**game, **_stadium_coords(home_row["abbreviation"] if home_row else None)})
     conn.commit()
     return games
 
@@ -77,7 +79,9 @@ def sync_weather_for_upcoming(conn, client: httpx.Client) -> None:
         "WHERE status = 'scheduled' AND is_outdoor = 1 AND lat IS NOT NULL"
     ).fetchall()
     for row in rows:
-        target_time = datetime.fromisoformat(row["kickoff_at"].replace("Z", "+00:00"))
+        if not row["kickoff_at"]:
+            continue
+        target_time = parse_kickoff(row["kickoff_at"])
         try:
             forecast = weather.fetch_forecast(client, row["lat"], row["lon"], target_time)
         except (httpx.HTTPError, ValueError):
@@ -130,12 +134,18 @@ def sync_all(conn, client: httpx.Client, current_season: int) -> None:
     sync_teams(conn, client)
     sync_historical(conn, client, min_season=current_season - SYNC_SEASONS_BACK, max_season=current_season)
     sync_team_stats(conn, client, current_season, SYNC_SEASONS_BACK)
-    elo.sync_ratings(conn, _now_iso())
     season, week = espn.fetch_current_week(client)
     for w in range(1, week + 3):
         sync_schedule(conn, client, season, w)
+    # Must run after sync_schedule above -- Elo needs this run's just-finalized current-season
+    # scores in the database before it replays history, or ratings lag a full sync behind.
+    elo.sync_ratings(conn, _now_iso())
     sync_weather_for_upcoming(conn, client)
     sync_injuries_for_upcoming(conn, client)
     sync_predictions(conn, predict.load_weights(WEIGHTS_PATH))
+    # Cached so routes can read "what's the current season/week" without a live ESPN call on
+    # every page view -- see main._cached_current_season_week.
+    db.set_meta(conn, "current_season", str(season))
+    db.set_meta(conn, "current_week", str(week))
     db.set_meta(conn, "last_synced_at", _now_iso())
     conn.commit()

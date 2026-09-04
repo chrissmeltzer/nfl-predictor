@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from datetime import datetime
+
 STADIUMS = {
     "ARI": {"name": "State Farm Stadium", "lat": 33.5276, "lon": -112.2626},
     "ATL": {"name": "Mercedes-Benz Stadium", "lat": 33.7554, "lon": -84.4008},
@@ -69,3 +73,37 @@ DEFAULT_POSITION_IMPORTANCE = 1.0
 
 def canonical_abbreviation(abbr: str) -> str:
     return TEAM_ALIASES.get(abbr, abbr)
+
+
+def parse_kickoff(value: str) -> datetime:
+    """Parse an ESPN-style ISO-8601 kickoff timestamp (e.g. '2026-09-10T00:20Z')."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+# (css_class, display_label, counts_toward_win_probability_model) for each raw ESPN injury
+# status, keyed lowercased. A player not listed here (e.g. "Active") never counts.
+_INJURY_SEVERITY = {
+    "out": ("impact-out", "Out", True),
+    "ir": ("impact-out", "Out", True),
+    "injured reserve": ("impact-out", "Out", True),
+    "reserve/injured": ("impact-out", "Out", True),
+    "pup": ("impact-out", "Out", True),
+    "doubtful": ("impact-doubtful", "Doubtful", True),
+    "questionable": ("impact-questionable", "Questionable", False),
+}
+
+
+def _injury_entry(status: str | None) -> tuple[str, str, bool]:
+    normalized = (status or "").strip().lower()
+    if normalized in _INJURY_SEVERITY:
+        return _INJURY_SEVERITY[normalized]
+    return ("impact-minor", status or "Active", False)
+
+
+def injury_impact(status: str | None) -> tuple[str, str]:
+    css_class, label, _ = _injury_entry(status)
+    return css_class, label
+
+
+def injury_counts_toward_model(status: str | None) -> bool:
+    return _injury_entry(status)[2]

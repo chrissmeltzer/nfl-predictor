@@ -292,7 +292,8 @@ def test_game_detail_does_not_save_prediction_for_final_game(tmp_path, monkeypat
 def test_accuracy_dedupes_multiple_predictions_for_same_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
 
-    # Two page views of the same scheduled game log two prediction rows.
+    # Two page views of the same scheduled game each snapshot a prediction, but the second
+    # overwrites the first rather than accumulating a duplicate row for the same game.
     client.get("/games/g1")
     client.get("/games/g1")
 
@@ -300,7 +301,7 @@ def test_accuracy_dedupes_multiple_predictions_for_same_game(tmp_path, monkeypat
     pred_count = conn.execute(
         "SELECT COUNT(*) as c FROM predictions WHERE game_id = 'g1'"
     ).fetchone()["c"]
-    assert pred_count == 2
+    assert pred_count == 1
 
     conn.execute("UPDATE games SET status = 'final', home_score = 24, away_score = 17 WHERE id = 'g1'")
     conn.commit()
@@ -308,7 +309,6 @@ def test_accuracy_dedupes_multiple_predictions_for_same_game(tmp_path, monkeypat
 
     response = client.get("/accuracy")
     assert response.status_code == 200
-    # Exactly one row should be rendered for g1 despite the two saved predictions.
     assert response.text.count("B @ A") == 1
 
 
