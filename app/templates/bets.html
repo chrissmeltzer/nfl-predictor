@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}Safe Bets · Fourth Down Forecast{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">{{ season }} season · Week {{ week }}</p>
+    <h1>Safe moneyline bets.</h1>
+    <p class="hero-copy">Only the games where the model is lopsided <em>and</em> confident make this list — no close calls, no thin-data guesses.</p>
+  </div>
+  <div class="hero-stat"><span>Bets</span><strong>{{ safe_bets | length }}</strong><small>clearing the bar this week</small></div>
+</section>
+
+{% if safe_bets %}
+<div class="matchup-grid">
+  {% for bet in safe_bets %}
+  <article class="matchup-card bet-card">
+    <div class="card-meta"><span>Week {{ bet.game.week }}</span><time>{{ bet.kickoff }}</time></div>
+    <div class="bet-team">
+      <img src="{{ bet.logo }}" alt="{{ bet.team.name }} logo" class="team-logo team-logo-xl">
+      <div>
+        <p class="eyebrow">Moneyline pick</p>
+        <h3>{{ bet.team.name }}</h3>
+        <p class="bet-opponent">vs {{ bet.opponent.name }}</p>
+      </div>
+    </div>
+    <div class="card-footer-row bet-footer-row">
+      <p class="pick-line"><span>Win probability</span><strong>{{ bet.win_probability }}%</strong></p>
+      <div class="betting-value bet-odds">{{ bet.moneyline_odds }}</div>
+    </div>
+    <div class="badge-group">
+      <span class="confidence-badge confidence-{{ bet.confidence_label | lower }}">{{ bet.confidence_label }} confidence</span>
+    </div>
+    <a class="card-link" href="/games/{{ bet.game.id }}">Open game analysis <span>→</span></a>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<section class="empty-state"><h2>No high-confidence bets this week.</h2><p>The slate is too close to call — check back closer to kickoff, or look over the full <a class="text-link" href="/">predictions</a> instead.</p></section>
+{% endif %}
+{% endblock %}

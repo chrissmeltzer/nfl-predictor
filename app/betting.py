@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+SAFE_BET_MIN_PROBABILITY_BY_CONFIDENCE = {
+    "Low": 85,
+    "Moderate": 75,
+    "High": 65,
+}
+
 
 def american_odds(win_probability: float) -> int:
     """Convert a win-probability percentage (5-95) into fair American odds."""
@@ -48,3 +54,40 @@ def build_betting_angles(matchup: dict, matchup_history: list[dict]) -> dict | N
             "history_avg": round(history_avg, 1) if history_avg is not None else None,
         },
     }
+
+
+def build_safe_bets(matchups: list[dict]) -> list[dict]:
+    """Pick out moneyline bets the model is confident enough in to call "safe".
+
+    The win-probability bar a game must clear slides with the model's own confidence in the
+    prediction: a Low-confidence read (thin current-season sample) needs a near-lock blowout
+    to earn a spot, while a High-confidence read can qualify at a smaller margin. A game with
+    no threshold for its confidence label (an unrecognized label) doesn't qualify.
+    """
+    bets = []
+    for matchup in matchups:
+        if matchup["game"]["status"] == "final":
+            continue
+        min_probability = SAFE_BET_MIN_PROBABILITY_BY_CONFIDENCE.get(matchup["confidence_label"])
+        if min_probability is None:
+            continue
+
+        home_is_favorite = matchup["home_probability"] >= matchup["away_probability"]
+        favorite_probability = matchup["home_probability"] if home_is_favorite else matchup["away_probability"]
+        if favorite_probability < min_probability:
+            continue
+
+        bets.append({
+            "game": matchup["game"],
+            "team": matchup["home"] if home_is_favorite else matchup["away"],
+            "opponent": matchup["away"] if home_is_favorite else matchup["home"],
+            "logo": matchup["home_logo"] if home_is_favorite else matchup["away_logo"],
+            "color": matchup["home_color"] if home_is_favorite else matchup["away_color"],
+            "win_probability": favorite_probability,
+            "moneyline_odds": american_odds(favorite_probability),
+            "confidence_label": matchup["confidence_label"],
+            "kickoff": matchup["kickoff"],
+        })
+
+    bets.sort(key=lambda bet: bet["win_probability"], reverse=True)
+    return bets

@@ -351,6 +351,56 @@ def test_accuracy_computes_mean_errors_correctly(tmp_path, monkeypatch):
     assert "<span>Mean total error</span><strong>1.0</strong>" in response.text
 
 
+def _canned_prediction_with_confidence(home_score, away_score, confidence_label):
+    return lambda conn, weights, game: {
+        "predicted_home_score": home_score, "predicted_away_score": away_score,
+        "confidence_score": 80, "confidence_label": confidence_label,
+        "breakdown": {"home": {}, "away": {}}, "upset_alert": False,
+    }
+
+
+def test_bets_page_shows_safe_bet_for_lopsided_high_confidence_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.predict, "predict_game", _canned_prediction_with_confidence(10.0, 30.0, "High"))
+
+    response = client.get("/bets")
+
+    assert response.status_code == 200
+    assert "Team B" in response.text
+    assert "No high-confidence bets" not in response.text
+
+
+def test_bets_page_hides_close_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.predict, "predict_game", _canned_prediction_with_confidence(21.0, 20.0, "High"))
+
+    response = client.get("/bets")
+
+    assert response.status_code == 200
+    assert "No high-confidence bets" in response.text
+
+
+def test_bets_page_hides_low_confidence_game_below_blowout_threshold(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.predict, "predict_game", _canned_prediction_with_confidence(18.0, 22.0, "Low"))
+
+    response = client.get("/bets")
+
+    assert response.status_code == 200
+    assert "No high-confidence bets" in response.text
+
+
+def test_bets_page_shows_low_confidence_blowout_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.predict, "predict_game", _canned_prediction_with_confidence(10.0, 30.0, "Low"))
+
+    response = client.get("/bets")
+
+    assert response.status_code == 200
+    assert "Team B" in response.text
+    assert "No high-confidence bets" not in response.text
+
+
 def test_is_stale_true_when_no_meta_row(tmp_path):
     conn = db.get_connection(tmp_path / "stale.db")
     db.init_db(conn)
