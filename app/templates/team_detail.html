@@ -37,7 +37,7 @@
       </div>
       {% endif %}
     </div>
-    <div class="schedule-probability"><span>{{ row.team_probability }}% win chance</span><div class="probability-track"><i style="width: {{ row.team_probability }}%"></i></div></div>
+    <div class="schedule-probability"><span>{{ row.team_probability }}% win chance</span><div class="probability-track"><i style="width: {{ row.team_probability }}%; background: {{ row.team_color }}"></i></div></div>
     <a class="icon-link" href="/games/{{ row.game.id }}" aria-label="Open {{ team.name }} versus {{ row.opponent.name }} analysis">→</a>
   </article>
   {% endfor %}
