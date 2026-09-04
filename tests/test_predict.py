@@ -251,15 +251,15 @@ def test_upset_alert_false_when_model_agrees_with_elo(pg_url):
     assert result["upset_alert"] is False
 
 
-def test_predict_game_backtest_ignores_finalized_games_that_happened_later(pg_url):
-    conn_limited = make_conn(pg_url)
+def test_predict_game_backtest_ignores_finalized_games_that_happened_later(pg_db_factory):
+    conn_limited = make_conn(pg_db_factory())
     seed_game(conn_limited, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
     seed_game(conn_limited, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
     conn_limited.commit()
     target_limited = conn_limited.execute("SELECT * FROM games WHERE id = 'target'").fetchone()
     result_limited = predict.predict_game(conn_limited, WEIGHTS, target_limited)
 
-    conn_full = make_conn(pg_url)
+    conn_full = make_conn(pg_db_factory())
     seed_game(conn_full, "g0", "A", "B", 10, 24, "2026-08-25T00:00Z")
     seed_game(conn_full, "target", "A", "B", 20, 17, "2026-09-01T00:00Z")
     # A lopsided game that happens *after* the target game -- must not leak into its prediction.
