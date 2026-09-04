@@ -91,3 +91,5 @@ h1, h2, h3, p { margin-top: 0; } h1 { max-width: 680px; margin-bottom: .7rem; fo
 .pick-buttons { display: flex; gap: .4rem; } .pick-btn { padding: .35rem .75rem; color: var(--text); font-size: .78rem; font-weight: 800; background: rgba(151, 166, 186, .1); border: 1px solid var(--line); border-radius: 99px; cursor: pointer; } .pick-btn-active { color: #06111c; background: var(--cyan); border-color: var(--cyan); }
 .pick-locked { display: flex; align-items: center; gap: .4rem; color: var(--muted); font-size: .82rem; font-weight: 800; }
 .pick-result { display: inline-flex; font-weight: 800; } .pick-correct { color: var(--green); } .pick-incorrect { color: var(--rose); } .pick-push { color: var(--amber); }
+
+.week-table { margin-top: 1rem; }

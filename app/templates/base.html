@@ -20,6 +20,7 @@
         <a href="/">Predictions</a>
         <a href="/rankings">Rankings</a>
         <a href="/accuracy">Accuracy</a>
+        <a href="/leaderboard">Leaderboard</a>
       </nav>
       <a class="picker-chip" href="/join?next={{ (request.url.path ~ (('?' + request.url.query) if request.url.query else '')) | urlencode }}">
         {% if player %}Picking as <strong>{{ player.name }}</strong> · switch{% else %}Set your name to pick{% endif %}

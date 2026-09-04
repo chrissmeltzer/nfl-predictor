@@ -190,3 +190,48 @@ def test_schedule_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatc
 
     response = client.get("/")
     assert "pick-push" in response.text
+
+
+def test_leaderboard_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    conn.execute("UPDATE games SET status = 'final', home_score = 24, away_score = 17 WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "Chris" in response.text
+    assert "1-0" in response.text
+    assert "1/1" in response.text
+
+
+def test_leaderboard_treats_tie_game_as_push(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    conn.execute("UPDATE games SET status = 'final', home_score = 20, away_score = 20 WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "0-0-1" in response.text
+
+
+def test_leaderboard_shows_joined_player_with_no_decided_picks(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "Chris" in response.text
+    assert "0-0" in response.text

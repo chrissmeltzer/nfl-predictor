@@ -591,3 +591,80 @@ def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: 
     db.upsert_pick(conn, player["id"], game_id, team_id, datetime.now(timezone.utc).isoformat())
     conn.commit()
     return RedirectResponse(url=f"/?week={week}", status_code=303)
+
+
+def _pick_outcome(row) -> str:
+    picked_home = row["picked_team_id"] == row["home_team_id"]
+    picked_score = row["home_score"] if picked_home else row["away_score"]
+    opponent_score = row["away_score"] if picked_home else row["home_score"]
+    if picked_score > opponent_score:
+        return "win"
+    if picked_score < opponent_score:
+        return "loss"
+    return "push"
+
+
+def _build_standings(players, decided_picks) -> list[dict]:
+    records = {p["id"]: {"player": p, "wins": 0, "losses": 0, "pushes": 0} for p in players}
+    for row in decided_picks:
+        outcome = _pick_outcome(row)
+        record = records[row["player_id"]]
+        if outcome == "win":
+            record["wins"] += 1
+        elif outcome == "loss":
+            record["losses"] += 1
+        else:
+            record["pushes"] += 1
+
+    standings = []
+    for record in records.values():
+        decided = record["wins"] + record["losses"]
+        win_pct = record["wins"] / decided if decided else None
+        standings.append({
+            "player": record["player"],
+            "wins": record["wins"],
+            "losses": record["losses"],
+            "pushes": record["pushes"],
+            "record": (
+                f"{record['wins']}-{record['losses']}-{record['pushes']}"
+                if record["pushes"] else f"{record['wins']}-{record['losses']}"
+            ),
+            "win_pct": win_pct,
+            "win_pct_label": f"{round(win_pct * 100)}%" if win_pct is not None else "—",
+        })
+    standings.sort(key=lambda s: (s["win_pct"] if s["win_pct"] is not None else -1, s["wins"]), reverse=True)
+    for i, standing in enumerate(standings, start=1):
+        standing["rank"] = i
+    return standings
+
+
+def _build_weekly_breakdown(players, decided_picks) -> list[dict]:
+    weeks: dict[tuple[int, int], dict[int, dict]] = {}
+    for row in decided_picks:
+        key = (row["season"], row["week"])
+        week_bucket = weeks.setdefault(key, {p["id"]: {"correct": 0, "total": 0} for p in players})
+        stat = week_bucket[row["player_id"]]
+        stat["total"] += 1
+        if _pick_outcome(row) == "win":
+            stat["correct"] += 1
+
+    breakdown = []
+    for (season, week), player_stats in sorted(weeks.items(), reverse=True):
+        breakdown.append({
+            "season": season,
+            "week": week,
+            "players": [{"player": p, **player_stats[p["id"]]} for p in players],
+        })
+    return breakdown
+
+
+@app.get("/leaderboard", response_class=HTMLResponse)
+def leaderboard_page(request: Request, conn=Depends(get_db)):
+    players = db.get_all_players(conn)
+    decided_picks = db.get_decided_picks(conn)
+    standings = _build_standings(players, decided_picks)
+    weekly = _build_weekly_breakdown(players, decided_picks)
+
+    return templates.TemplateResponse(
+        request, "leaderboard.html", _template_context(request, conn, standings=standings, weekly=weekly)
+    )
