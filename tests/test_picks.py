@@ -299,6 +299,77 @@ def test_pickem_page_does_not_crash_on_final_game_with_null_scores(tmp_path, mon
     assert "0-0" in response.text
 
 
+def test_schedule_page_shows_pick_mode_toggle_and_pick_buttons(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="pick-mode-toggle"' in response.text
+    assert 'action="/games/g1/pick"' in response.text
+    assert 'name="return_to" value="index"' in response.text
+
+
+def test_submit_pick_from_index_redirects_back_to_index(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    response = client.post(
+        "/games/g1/pick", data={"team_id": "A", "week": 1, "return_to": "index"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?week=1")
+    assert response.headers["location"].endswith("#game-g1")
+
+
+def test_submit_pick_from_index_persists_and_highlights_active_pick(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    response = client.post("/games/g1/pick", data={"team_id": "A", "week": 1, "return_to": "index"})
+
+    assert response.status_code == 200
+    assert "pick-btn-active" in response.text
+
+
+def test_submit_pick_from_index_rejected_after_kickoff_redirects_with_error(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    _seed_teams_and_game(conn, game_id="g_started", kickoff_at="2020-01-01T00:00:00Z")
+    conn.commit()
+    conn.close()
+
+    response = client.post(
+        "/games/g_started/pick", data={"team_id": "A", "week": 1, "return_to": "index"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/?week=1")
+    assert "pick_error=locked" in response.headers["location"]
+
+
+def test_index_shows_correct_pick_badge_for_final_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/games/g1/pick", data={"team_id": "A", "week": 1, "return_to": "index"})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    conn.execute("UPDATE games SET status = 'final', home_score = 24, away_score = 17 WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/?week=1")
+    assert "pick-correct" in response.text
+
+
 def test_current_player_ignores_tampered_cookie_instead_of_crashing(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
     client.cookies.set("picker_id", "1" * 30)

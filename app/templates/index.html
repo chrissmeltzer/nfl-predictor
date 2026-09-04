@@ -14,18 +14,28 @@
 <p class="notice">No team matched that search. Try a city, team name, or abbreviation.</p>
 {% endif %}
 
+{% if request.query_params.get('pick_error') == 'locked' %}
+<p class="notice">That game has already started — picks are locked.</p>
+{% endif %}
+
 <section class="section-heading">
   <div><p class="eyebrow">This week</p><h2>Projected matchups</h2></div>
-  <div class="sort-toggle">
-    <a href="?week={{ week }}" class="sort-link{{ ' sort-link-active' if sort != 'confidence' else '' }}">By kickoff</a>
-    <a href="?week={{ week }}&amp;sort=confidence" class="sort-link{{ ' sort-link-active' if sort == 'confidence' else '' }}">Riskiest first</a>
+  <div class="section-heading-controls">
+    <label class="switch-field">
+      <span>Pick mode</span>
+      <span class="switch">
+        <input type="checkbox" id="pick-mode-toggle">
+        <span class="switch-track"></span>
+        <span class="switch-thumb"></span>
+      </span>
+    </label>
   </div>
 </section>
 
 {% if matchups %}
 <div class="matchup-grid">
   {% for matchup in matchups %}
-  <article class="matchup-card">
+  <article class="matchup-card" id="game-{{ matchup.game.id }}">
     <div class="card-meta"><span>Week {{ matchup.game.week }}</span><time>{{ matchup.kickoff }}</time></div>
     <div class="teams-row">
       <a href="/teams/{{ matchup.away.id }}" class="team-lockup">
@@ -69,10 +79,56 @@
       {% endfor %}
     </ul>
     {% endif %}
+    <div class="pick-row index-pick-row">
+      <span class="pick-row-label">Your pick</span>
+      {% if matchup.pick_locked %}
+      <span class="pick-locked">
+        {% if matchup.player_pick_team_id == matchup.away.id %}{{ matchup.away.abbreviation }}
+        {% elif matchup.player_pick_team_id == matchup.home.id %}{{ matchup.home.abbreviation }}
+        {% else %}No pick{% endif %}
+        {% if matchup.game.status == 'final' and matchup.player_pick_team_id %}
+          {% if matchup.actual_winner_team_id is none %}
+          <span class="pick-result pick-push">Push</span>
+          {% else %}
+          <span class="pick-result {{ 'pick-correct' if matchup.player_pick_team_id == matchup.actual_winner_team_id else 'pick-incorrect' }}">{{ '✓' if matchup.player_pick_team_id == matchup.actual_winner_team_id else '✗' }}</span>
+          {% endif %}
+        {% endif %}
+      </span>
+      {% else %}
+      <div class="pick-buttons">
+        <form method="post" action="/games/{{ matchup.game.id }}/pick">
+          <input type="hidden" name="team_id" value="{{ matchup.away.id }}">
+          <input type="hidden" name="week" value="{{ week }}">
+          <input type="hidden" name="return_to" value="index">
+          <button type="submit" class="pick-btn{{ ' pick-btn-active' if matchup.player_pick_team_id == matchup.away.id else '' }}">{{ matchup.away.abbreviation }}</button>
+        </form>
+        <form method="post" action="/games/{{ matchup.game.id }}/pick">
+          <input type="hidden" name="team_id" value="{{ matchup.home.id }}">
+          <input type="hidden" name="week" value="{{ week }}">
+          <input type="hidden" name="return_to" value="index">
+          <button type="submit" class="pick-btn{{ ' pick-btn-active' if matchup.player_pick_team_id == matchup.home.id else '' }}">{{ matchup.home.abbreviation }}</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
     <a class="card-link" href="/games/{{ matchup.game.id }}">Open game analysis <span>→</span></a>
   </article>
   {% endfor %}
 </div>
+<script>
+  (function () {
+    var grid = document.querySelector('.matchup-grid');
+    var toggle = document.getElementById('pick-mode-toggle');
+    if (!grid || !toggle) return;
+    var stored = localStorage.getItem('pickModeOn') === 'true';
+    toggle.checked = stored;
+    grid.classList.toggle('pick-mode-on', stored);
+    toggle.addEventListener('change', function () {
+      grid.classList.toggle('pick-mode-on', toggle.checked);
+      localStorage.setItem('pickModeOn', toggle.checked);
+    });
+  })();
+</script>
 {% else %}
 <section class="empty-state"><h2>No games are available for this week.</h2><p>Use the sync endpoint to refresh the schedule and return here for projections.</p></section>
 {% endif %}
