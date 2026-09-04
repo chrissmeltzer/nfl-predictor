@@ -118,3 +118,75 @@ def test_base_header_shows_picking_as_name_after_join(tmp_path, monkeypatch):
     response = client.get("/")
     assert "Picking as" in response.text
     assert "Chris" in response.text
+
+
+def test_schedule_page_shows_pick_buttons_for_scheduled_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'action="/games/g1/pick"' in response.text
+
+
+def test_submit_pick_without_player_redirects_to_join(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    response = client.post("/games/g1/pick", data={"team_id": "A", "week": 1}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/join")
+
+
+def test_submit_pick_persists_and_highlights_active_pick(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    response = client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
+
+    assert response.status_code == 200
+    assert "pick-btn-active" in response.text
+
+
+def test_submit_pick_rejected_after_kickoff(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    _seed_teams_and_game(conn, game_id="g_started", kickoff_at="2020-01-01T00:00:00Z")
+    conn.commit()
+    conn.close()
+
+    response = client.post("/games/g_started/pick", data={"team_id": "A", "week": 1}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "pick_error=locked" in response.headers["location"]
+
+    check_conn = db.get_connection(tmp_path / "test.db")
+    row = check_conn.execute("SELECT * FROM picks WHERE game_id = 'g_started'").fetchone()
+    check_conn.close()
+    assert row is None
+
+
+def test_schedule_page_shows_correct_pick_badge_for_final_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    conn.execute("UPDATE games SET status = 'final', home_score = 24, away_score = 17 WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/")
+    assert "pick-correct" in response.text
+
+
+def test_schedule_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    conn.execute("UPDATE games SET status = 'final', home_score = 20, away_score = 20 WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/")
+    assert "pick-push" in response.text

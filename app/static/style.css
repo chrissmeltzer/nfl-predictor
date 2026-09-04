@@ -86,3 +86,8 @@ h1, h2, h3, p { margin-top: 0; } h1 { max-width: 680px; margin-bottom: .7rem; fo
 
 .picker-chip { padding: .5rem .85rem; color: var(--muted); font-size: .78rem; font-weight: 700; white-space: nowrap; background: rgba(151, 166, 186, .1); border: 1px solid var(--line); border-radius: 99px; } .picker-chip strong { color: var(--cyan); }
 .join-form { display: flex; gap: .6rem; max-width: 420px; } .join-form input { flex: 1; padding: .7rem .9rem; color: var(--text); background: rgba(17, 26, 46, .9); border: 1px solid var(--line); border-radius: 10px; outline: none; } .join-form input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(34, 211, 238, .15); } .join-form button { padding: .7rem 1.1rem; color: #06111c; font-weight: 800; background: var(--cyan); border: 0; border-radius: 10px; cursor: pointer; }
+
+.pick-row { display: flex; justify-content: space-between; align-items: center; gap: .7rem; padding-top: .8rem; margin-top: .6rem; border-top: 1px solid var(--line); } .pick-row-label { color: var(--muted); font-size: .78rem; font-weight: 700; }
+.pick-buttons { display: flex; gap: .4rem; } .pick-btn { padding: .35rem .75rem; color: var(--text); font-size: .78rem; font-weight: 800; background: rgba(151, 166, 186, .1); border: 1px solid var(--line); border-radius: 99px; cursor: pointer; } .pick-btn-active { color: #06111c; background: var(--cyan); border-color: var(--cyan); }
+.pick-locked { display: flex; align-items: center; gap: .4rem; color: var(--muted); font-size: .82rem; font-weight: 800; }
+.pick-result { display: inline-flex; font-weight: 800; } .pick-correct { color: var(--green); } .pick-incorrect { color: var(--rose); } .pick-push { color: var(--amber); }

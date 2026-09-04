@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -93,6 +94,16 @@ def _is_stale(conn) -> bool:
         return True
     latest_dt = datetime.fromisoformat(latest)
     return datetime.now(timezone.utc) - latest_dt > timedelta(hours=STALENESS_HOURS)
+
+
+def _pick_locked(game) -> bool:
+    if game["status"] != "scheduled":
+        return True
+    kickoff = game["kickoff_at"]
+    if not kickoff:
+        return False
+    kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+    return kickoff_dt <= datetime.now(timezone.utc)
 
 
 def _logo_url(team) -> str:
@@ -209,6 +220,16 @@ def _build_analysis(breakdown: dict, home_name: str, away_name: str) -> list[str
 _REVEAL_HIT_MARGIN = 3.0
 
 
+def _actual_winner_team_id(game) -> str | None:
+    if game["status"] != "final" or game["home_score"] is None or game["away_score"] is None:
+        return None
+    if game["home_score"] > game["away_score"]:
+        return game["home_team_id"]
+    if game["away_score"] > game["home_score"]:
+        return game["away_team_id"]
+    return None
+
+
 def _reveal(conn, game) -> dict | None:
     if game["status"] != "final":
         return None
@@ -253,6 +274,7 @@ def _game_view(conn, game, teams, result: dict, selected_team_id: str | None = N
         "analysis": _build_analysis(breakdown, home["name"], away["name"]),
         "reveal": _reveal(conn, game),
         "upset_alert": result.get("upset_alert", False) and game["status"] != "final",
+        "actual_winner_team_id": _actual_winner_team_id(game),
     }
     if selected_team_id:
         is_home = game["home_team_id"] == selected_team_id
@@ -304,6 +326,12 @@ def schedule(request: Request, week: int | None = None, sort: str | None = None,
     matchups = [_game_view(conn, game, teams, predict.predict_game(conn, weights, game)) for game in games]
     if sort == "confidence":
         matchups.sort(key=lambda m: m["confidence_score"] if m["confidence_score"] is not None else 0)
+
+    player = _current_player(request, conn)
+    picks = db.get_player_picks_for_games(conn, player["id"], [m["game"]["id"] for m in matchups]) if player else {}
+    for matchup in matchups:
+        matchup["player_pick_team_id"] = picks.get(matchup["game"]["id"])
+        matchup["pick_locked"] = _pick_locked(matchup["game"])
 
     return templates.TemplateResponse(
         request,
@@ -545,3 +573,21 @@ def join_submit(request: Request, name: str = Form(...), next: str = Form("/"), 
         PICKER_COOKIE, str(player["id"]), max_age=PICKER_COOKIE_MAX_AGE, httponly=True, samesite="lax"
     )
     return response
+
+
+@app.post("/games/{game_id}/pick")
+def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: int = Form(...), conn=Depends(get_db)):
+    player = _current_player(request, conn)
+    if player is None:
+        return RedirectResponse(url=f"/join?next={quote(f'/?week={week}', safe='')}", status_code=303)
+
+    game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
+    if game is None:
+        raise HTTPException(status_code=404)
+
+    if _pick_locked(game):
+        return RedirectResponse(url=f"/?week={week}&pick_error=locked", status_code=303)
+
+    db.upsert_pick(conn, player["id"], game_id, team_id, datetime.now(timezone.utc).isoformat())
+    conn.commit()
+    return RedirectResponse(url=f"/?week={week}", status_code=303)
