@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app import db
 from tests.test_main import make_test_client
@@ -6,6 +6,21 @@ from tests.test_main import make_test_client
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _push_g1_kickoff_into_future(tmp_path):
+    """g1 is seeded by make_test_client with a hardcoded kickoff_at that will eventually
+    be in the past (see tests/test_main.py). Tests that need g1 to still be pickable
+    (i.e. not yet locked) push its kickoff relative to wall-clock time instead of relying
+    on the fixture's hardcoded date.
+    """
+    conn = db.get_connection(tmp_path / "test.db")
+    conn.execute(
+        "UPDATE games SET kickoff_at = ? WHERE id = 'g1'",
+        ((datetime.now(timezone.utc) + timedelta(days=7)).isoformat().replace("+00:00", "Z"),),
+    )
+    conn.commit()
+    conn.close()
 
 
 def _seed_teams_and_game(conn, game_id="g1", status="scheduled", home_score=None, away_score=None,
@@ -122,6 +137,7 @@ def test_base_header_shows_picking_as_name_after_join(tmp_path, monkeypatch):
 
 def test_schedule_page_shows_pick_buttons_for_scheduled_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
     response = client.get("/")
     assert response.status_code == 200
     assert 'action="/games/g1/pick"' in response.text
@@ -136,6 +152,7 @@ def test_submit_pick_without_player_redirects_to_join(tmp_path, monkeypatch):
 
 def test_submit_pick_persists_and_highlights_active_pick(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
 
     response = client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
@@ -166,6 +183,7 @@ def test_submit_pick_rejected_after_kickoff(tmp_path, monkeypatch):
 
 def test_schedule_page_shows_correct_pick_badge_for_final_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
     client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
 
@@ -180,6 +198,7 @@ def test_schedule_page_shows_correct_pick_badge_for_final_game(tmp_path, monkeyp
 
 def test_schedule_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
     client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
 
@@ -194,6 +213,7 @@ def test_schedule_page_shows_push_badge_for_tied_final_game(tmp_path, monkeypatc
 
 def test_leaderboard_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
     client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
 
@@ -212,6 +232,7 @@ def test_leaderboard_shows_standings_and_weekly_breakdown(tmp_path, monkeypatch)
 
 def test_leaderboard_treats_tie_game_as_push(tmp_path, monkeypatch):
     client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
     client.post("/join", data={"name": "Chris", "next": "/"})
     client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
 
@@ -235,3 +256,53 @@ def test_leaderboard_shows_joined_player_with_no_decided_picks(tmp_path, monkeyp
     assert response.status_code == 200
     assert "Chris" in response.text
     assert "0-0" in response.text
+
+
+def test_submit_pick_rejects_team_not_in_game(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    db.upsert_team(conn, {"id": "C", "name": "Team C", "abbreviation": "C"})
+    conn.commit()
+    conn.close()
+
+    response = client.post("/games/g1/pick", data={"team_id": "C", "week": 1}, follow_redirects=False)
+
+    assert response.status_code == 400
+
+    check_conn = db.get_connection(tmp_path / "test.db")
+    row = check_conn.execute("SELECT * FROM picks WHERE game_id = 'g1'").fetchone()
+    check_conn.close()
+    assert row is None
+
+
+def test_leaderboard_does_not_crash_on_final_game_with_null_scores(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    _push_g1_kickoff_into_future(tmp_path)
+    client.post("/join", data={"name": "Chris", "next": "/"})
+    client.post("/games/g1/pick", data={"team_id": "A", "week": 1})
+
+    conn = db.get_connection(tmp_path / "test.db")
+    # A final game with no scores recorded is a data-integrity anomaly, but the
+    # leaderboard must degrade gracefully rather than 500 for every player.
+    conn.execute("UPDATE games SET status = 'final', home_score = NULL, away_score = NULL WHERE id = 'g1'")
+    conn.commit()
+    conn.close()
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "Chris" in response.text
+    # No phantom win/loss should be recorded for the score-less game.
+    assert "0-0" in response.text
+
+
+def test_current_player_ignores_tampered_cookie_instead_of_crashing(tmp_path, monkeypatch):
+    client = make_test_client(tmp_path, monkeypatch)
+    client.cookies.set("picker_id", "1" * 30)
+
+    response = client.get("/")
+
+    assert response.status_code == 200

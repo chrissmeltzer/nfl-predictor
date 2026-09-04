@@ -74,7 +74,7 @@ PICKER_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 def _current_player(request: Request, conn) -> sqlite3.Row | None:
     raw = request.cookies.get(PICKER_COOKIE)
-    if not raw or not raw.isdigit():
+    if not raw or not raw.isdecimal() or len(raw) > 18:
         return None
     return db.get_player_by_id(conn, int(raw))
 
@@ -584,6 +584,9 @@ def submit_pick(request: Request, game_id: str, team_id: str = Form(...), week: 
     game = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
     if game is None:
         raise HTTPException(status_code=404)
+
+    if team_id not in (game["home_team_id"], game["away_team_id"]):
+        raise HTTPException(status_code=400)
 
     if _pick_locked(game):
         return RedirectResponse(url=f"/?week={week}&pick_error=locked", status_code=303)

@@ -276,6 +276,6 @@ def get_decided_picks(conn) -> list[sqlite3.Row]:
         FROM picks p
         JOIN games g ON g.id = p.game_id
         JOIN players pl ON pl.id = p.player_id
-        WHERE g.status = 'final'
+        WHERE g.status = 'final' AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
         """
     ).fetchall()
