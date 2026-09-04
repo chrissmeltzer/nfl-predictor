@@ -8,9 +8,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import db
-from app.config import DB_PATH
+from app.config import DATABASE_URL
 
-conn = db.get_connection(DB_PATH)
+conn = db.get_connection(DATABASE_URL)
 db.init_db(conn)
 
 db.upsert_team(conn, {"id": "26", "name": "Seattle Seahawks", "abbreviation": "SEA"})
@@ -33,4 +33,4 @@ db.upsert_game(conn, {
 })
 
 conn.commit()
-print("Seeded sample data into", DB_PATH)
+print("Seeded sample data into", DATABASE_URL)

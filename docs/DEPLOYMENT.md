@@ -1,6 +1,6 @@
 # Deployment Notes
 
-This is a FastAPI + SQLite application. It requires a platform that runs a persistent Python
+This is a FastAPI + Postgres application. It requires a platform that runs a persistent Python
 process -- it cannot be hosted on GitHub Pages, which only serves static files.
 
 ## Why the GitHub Pages build was failing
@@ -25,15 +25,16 @@ Any platform that can run a Docker container or a standard Python/ASGI process w
 
 ```bash
 docker build -t nfl-predictor .
-docker run -p 8000:8000 -v $(pwd)/data:/app/data nfl-predictor
+docker run -p 8000:8000 -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/nfl_predictor nfl-predictor
 ```
 
-## Persistent storage
+## Database
 
-`nfl.db` (see `app/config.py`) must live on a persistent volume/disk in production. Without
-one, every redeploy wipes synced schedule, stats, and Elo rating data, and the app has to
-resync from scratch. Most platforms (Render, Fly.io) offer a small free persistent disk you
-can mount at the database's configured path.
+The app connects to Postgres via the `DATABASE_URL` environment variable (see
+`app/config.py`). For local development, `docker compose up -d db` starts a Postgres
+container matching the default `DATABASE_URL`. In production, `DATABASE_URL` should point
+at a hosted Postgres instance rather than a container tied to the app's own lifecycle, so
+data survives redeploys.
 
 ## Weight calibration is manual, not part of deployment
 
